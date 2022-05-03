@@ -210,13 +210,11 @@ describe('useQuery Hook SSR', () => {
 
     const Component = () => {
       const {
-        // loading,
-        // data,
+        loading,
       } = useQuery(CAR_QUERY, { skip: true });
       renderCount += 1;
 
-      // expect(loading).toBeFalsy();
-      // expect(data).toBeUndefined();
+      expect(loading).toBeFalsy();
 
       return <AnotherComponent />;
     };
@@ -228,8 +226,8 @@ describe('useQuery Hook SSR', () => {
     );
 
     return renderToStringWithData(app).then(result => {
-      expect(renderCount).toBe(1);
-      expect(result).toBe('');
+      expect(renderCount).toBe(4);
+      expect(result).toMatch(/Audi/);
     });
   });
 

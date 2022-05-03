@@ -134,7 +134,8 @@ export class RenderPromises {
     const { query, variables } = props;
     const varMap = queryInfoTrie.get(query) || new Map<string, QueryInfo>();
     if (!queryInfoTrie.has(query)) queryInfoTrie.set(query, varMap);
-    const variablesString = JSON.stringify(variables);
+    const isStandby = props.fetchPolicy === 'standby'
+    const variablesString = JSON.stringify({ variables, isStandby });
     const info = varMap.get(variablesString) || makeDefaultQueryInfo();
     if (!varMap.has(variablesString)) varMap.set(variablesString, info);
     return info;
