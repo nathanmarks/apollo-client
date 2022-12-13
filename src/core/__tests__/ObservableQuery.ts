@@ -21,6 +21,7 @@ import mockWatchQuery from '../../testing/core/mocking/mockWatchQuery';
 import wrap from '../../testing/core/wrap';
 
 import { resetStore } from './QueryManager';
+import { waitFor } from '@testing-library/react';
 
 export const mockFetchQuery = (queryManager: QueryManager<any>) => {
   const fetchQueryObservable = queryManager.fetchQueryObservable;
@@ -654,6 +655,47 @@ describe('ObservableQuery', () => {
       });
     });
   });
+
+  describe('flushUpdate', () => {
+    itAsync('uses the custom flush update', async (resolve, reject) => {
+      let updateCb;
+
+      const flushUpdateCallback = jest.fn((cb) => {
+        updateCb = cb
+      })
+
+      const queryManager = new QueryManager({
+        link: mockSingleLink({
+          request: { query, variables },
+          result: { data: dataOne },
+        }),
+        assumeImmutableResults: true,
+        cache: new InMemoryCache({
+          addTypename: false,
+        }),
+        flushUpdate: flushUpdateCallback,
+      });
+
+      const observable = queryManager.watchQuery({
+        query,
+        variables,
+        notifyOnNetworkStatusChange: true,
+      });
+
+      subscribeAndCount(reject, observable, (_, result) => {
+        expect(result.loading).toBe(false);
+        expect(result.data).toEqual(dataOne);
+        expect(flushUpdateCallback).toHaveBeenCalled()
+        resolve()
+      });
+
+      await waitFor(() => {
+        expect(flushUpdateCallback).toHaveBeenCalled()
+      })
+
+      updateCb()
+    })
+  })
 
   describe('setVariables', () => {
     itAsync('reruns query if the variables change', (resolve, reject) => {

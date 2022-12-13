@@ -106,6 +106,8 @@ export class QueryManager<TStore> {
   // currently active queries and fetches.
   private fetchCancelFns = new Map<string, (error: any) => any>();
 
+  private flushUpdateCallback?: (cb: () => void) => void;
+
   constructor({
     cache,
     link,
@@ -116,7 +118,8 @@ export class QueryManager<TStore> {
     clientAwareness = {},
     localState,
     assumeImmutableResults,
-    notifyOnTeardown = true
+    notifyOnTeardown = true,
+    flushUpdate,
   }: {
     cache: ApolloCache<TStore>;
     link: ApolloLink;
@@ -128,6 +131,7 @@ export class QueryManager<TStore> {
     localState?: LocalState<TStore>;
     assumeImmutableResults?: boolean;
     notifyOnTeardown?: boolean;
+    flushUpdate?: (cb: () => void) => void;
   }) {
     this.cache = cache;
     this.link = link;
@@ -138,9 +142,19 @@ export class QueryManager<TStore> {
     this.ssrMode = ssrMode;
     this.assumeImmutableResults = !!assumeImmutableResults;
     this.notifyOnTeardown = !!notifyOnTeardown;
+    this.flushUpdateCallback = flushUpdate;
     if ((this.onBroadcast = onBroadcast)) {
       this.mutationStore = Object.create(null);
     }
+  }
+
+  public flushUpdate(cb: () => void) {
+    if (this.flushUpdateCallback) {
+      this.flushUpdateCallback(cb)
+      return
+    }
+
+    cb()
   }
 
   /**
