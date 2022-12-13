@@ -61,6 +61,7 @@ export type ApolloClientOptions<TCacheShape> = {
   name?: string;
   version?: string;
   notifyOnTeardown?: boolean;
+  flushUpdate?: (cb: () => void) => void;
 };
 
 // Though mergeOptions now resides in @apollo/client/utilities, it was

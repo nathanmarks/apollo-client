@@ -871,7 +871,9 @@ Did you mean to call refetch(variables) instead of refetch({ variables })?`);
         this.updateLastResult(result, variables);
       }
 
-      iterateObserversSafely(this.observers, 'next', result);
+      this.queryManager.flushUpdate(() => {
+        iterateObserversSafely(this.observers, 'next', result);
+      });
     }
   }
 
@@ -891,7 +893,11 @@ Did you mean to call refetch(variables) instead of refetch({ variables })?`);
 
     this.updateLastResult(errorResult, variables);
 
-    iterateObserversSafely(this.observers, 'error', this.last!.error = error);
+    this.last!.error = error
+
+    this.queryManager.flushUpdate(() => {
+      iterateObserversSafely(this.observers, 'error', error);
+    });
   }
 
   public hasObservers() {
