@@ -153,7 +153,8 @@ export class ApolloClient<TCacheShape> implements DataProxy {
       fragmentMatcher,
       name: clientAwarenessName,
       version: clientAwarenessVersion,
-      notifyOnTeardown = true
+      notifyOnTeardown = true,
+      flushUpdate,
     } = options;
 
     let { link } = options;
@@ -260,7 +261,8 @@ export class ApolloClient<TCacheShape> implements DataProxy {
           });
         }
       } : void 0,
-      notifyOnTeardown
+      notifyOnTeardown,
+      flushUpdate,
     });
   }
 

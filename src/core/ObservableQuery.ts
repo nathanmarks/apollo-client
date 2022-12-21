@@ -122,13 +122,16 @@ export class ObservableQuery<
       const first = !this.observers.size;
       this.observers.add(observer);
 
-      // Deliver most recent error or result.
-      const last = this.last;
-      if (last && last.error) {
-        observer.error && observer.error(last.error);
-      } else if (last && last.result) {
-        observer.next && observer.next(last.result);
-      }
+      this.queryManager.flushUpdate(() => {
+        // Deliver most recent error or result.
+        const last = this.last;
+
+        if (last && last.error) {
+          observer.error && observer.error(last.error);
+        } else if (last && last.result) {
+          observer.next && observer.next(last.result);
+        }
+      })
 
       // Initiate observation of this query if it hasn't been reported to
       // the QueryManager yet.

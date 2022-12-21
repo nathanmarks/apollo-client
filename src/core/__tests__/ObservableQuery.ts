@@ -654,7 +654,7 @@ describe('ObservableQuery', () => {
 
   describe('flushUpdate', () => {
     itAsync('uses the custom flush update', async (resolve, reject) => {
-      let updateCb;
+      let updateCb = () => {};
 
       const flushUpdateCallback = jest.fn((cb) => {
         updateCb = cb
