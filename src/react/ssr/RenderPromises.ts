@@ -30,6 +30,9 @@ export class RenderPromises {
   // Map from Query component instances to pending fetchData promises.
   private queryPromises = new Map<QueryDataOptions<any, any>, Promise<any>>();
 
+  // Misc promises :)
+  private miscPromises = new Map<string, Promise<any>>();
+
   // Two-layered map from (query document, stringified variables) to QueryInfo
   // objects. These QueryInfo objects are intended to survive through the whole
   // getMarkupFromTree process, whereas specific Query instances do not survive
@@ -40,9 +43,15 @@ export class RenderPromises {
   public stop() {
     if (!this.stopped) {
       this.queryPromises.clear();
+      this.miscPromises.clear();
       this.queryInfoTrie = makeQueryInfoTrie();
       this.stopped = true;
     }
+  }
+
+  public addMiscPromise(key: string,promise: Promise<any>) {
+    if (this.stopped) return;
+    this.miscPromises.set(key, promise);
   }
 
   // Registers the server side rendered observable.
@@ -116,6 +125,10 @@ export class RenderPromises {
 
   public consumeAndAwaitPromises() {
     const promises: Promise<any>[] = [];
+    this.miscPromises.forEach((promise) => {
+      promises.push(promise);
+    });
+    this.miscPromises.clear();
     this.queryPromises.forEach((promise, queryInstance) => {
       // Make sure we never try to call fetchData for this query document and
       // these variables again. Since the queryInstance objects change with
