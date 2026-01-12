@@ -464,7 +464,7 @@ function useObservableSubscriptionResult<
         // request if "unsubscribe"  and "resubscribe" to the same ObservableQuery
         // happen in very fast succession.
         return () => {
-          setTimeout(() => subscription.current.unsubscribe());
+          return subscription.current.unsubscribe();
         };
       },
 

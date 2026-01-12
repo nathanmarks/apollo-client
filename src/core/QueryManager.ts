@@ -1105,7 +1105,7 @@ export class QueryManager<TStore> {
     this.broadcastQueries();
   }
 
-  private stopQueryNoBroadcast(queryId: string) {
+  public stopQueryNoBroadcast(queryId: string) {
     this.stopQueryInStoreNoBroadcast(queryId);
     this.removeQuery(queryId);
   }
