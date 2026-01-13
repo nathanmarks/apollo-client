@@ -8,13 +8,14 @@ import { equal } from "@wry/equality";
 import type { ApolloLink, FetchResult } from "../link/core/index.js";
 import { execute } from "../link/core/index.js";
 import {
-  addNonReactiveToNamedFragments,
+  // IC: Commented out - not needed since we don't use @client/@nonreactive/@connection/@unmask directives
+  // addNonReactiveToNamedFragments,
   defaultCacheSizes,
-  hasDirectives,
+  // hasDirectives,
   isExecutionPatchIncrementalResult,
   isExecutionPatchResult,
   isFullyUnmaskedOperation,
-  removeDirectivesFromDocument,
+  // removeDirectivesFromDocument,
 } from "../utilities/index.js";
 import type { Cache, ApolloCache } from "../cache/index.js";
 import { canonicalStringify } from "../cache/index.js";
@@ -27,7 +28,8 @@ import {
   getDefaultValues,
   getOperationDefinition,
   getOperationName,
-  hasClientExports,
+  // IC: Commented out - not needed since we don't use @client @export directives
+  // hasClientExports,
   graphQLResultHasError,
   getGraphQLErrorsFromResult,
   Observable,
@@ -700,25 +702,29 @@ export class QueryManager<TStore> {
 
     if (!transformCache.has(document)) {
       const cacheEntry: TransformCacheEntry = {
-        // TODO These three calls (hasClientExports, shouldForceResolvers, and
-        // usesNonreactiveDirective) are performing independent full traversals
-        // of the transformed document. We should consider merging these
-        // traversals into a single pass in the future, though the work is
-        // cached after the first time.
-        hasClientExports: hasClientExports(document),
-        hasForcedResolvers: this.localState.shouldForceResolvers(document),
-        hasNonreactiveDirective: hasDirectives(["nonreactive"], document),
-        nonReactiveQuery: addNonReactiveToNamedFragments(document),
-        clientQuery: this.localState.clientQuery(document),
-        serverQuery: removeDirectivesFromDocument(
-          [
-            { name: "client", remove: true },
-            { name: "connection" },
-            { name: "nonreactive" },
-            { name: "unmask" },
-          ],
-          document
-        ),
+        // IC: We don't use @client, @export, @nonreactive, @connection, @unmask directives
+        // so we skip the expensive AST traversals and default these values.
+        // Original code performed 6+ full traversals per unique document.
+        hasClientExports: false,
+        hasForcedResolvers: false,
+        hasNonreactiveDirective: false,
+        nonReactiveQuery: document,
+        clientQuery: null,
+        serverQuery: document,
+        // hasClientExports: hasClientExports(document),
+        // hasForcedResolvers: this.localState.shouldForceResolvers(document),
+        // hasNonreactiveDirective: hasDirectives(["nonreactive"], document),
+        // nonReactiveQuery: addNonReactiveToNamedFragments(document),
+        // clientQuery: this.localState.clientQuery(document),
+        // serverQuery: removeDirectivesFromDocument(
+        //   [
+        //     { name: "client", remove: true },
+        //     { name: "connection" },
+        //     { name: "nonreactive" },
+        //     { name: "unmask" },
+        //   ],
+        //   document
+        // ),
         defaultVars: getDefaultValues(
           getOperationDefinition(document)
         ) as OperationVariables,
