@@ -25,3 +25,26 @@ Extends `RenderPromises` (the SSR utility class) to support arbitrary promises:
 - Cleared during `stop()` cleanup
 
 **Purpose**: Allows adding arbitrary async work that contains Apollo queries not triggered via `useQuery` to the SSR queue for the Apollo render loop.
+
+---
+
+### Commit 3: `skip directive traversals in getDocumentInfo`
+
+**Changes:**
+
+**`QueryManager.ts`** - Defaulted values in `getDocumentInfo()` to skip expensive AST traversals:
+
+| Property | Old Value | New Value |
+|----------|-----------|-----------|
+| `hasClientExports` | `hasClientExports(document)` | `false` |
+| `hasForcedResolvers` | `this.localState.shouldForceResolvers(document)` | `false` |
+| `hasNonreactiveDirective` | `hasDirectives(["nonreactive"], document)` | `false` |
+| `nonReactiveQuery` | `addNonReactiveToNamedFragments(document)` | `document` |
+| `clientQuery` | `this.localState.clientQuery(document)` | `null` |
+| `serverQuery` | `removeDirectivesFromDocument([...], document)` | `document` |
+
+Commented out unused imports: `addNonReactiveToNamedFragments`, `hasDirectives`, `removeDirectivesFromDocument`, `hasClientExports`
+
+**Why:**
+
+We don't use `@client`, `@export`, `@nonreactive`, `@connection`, or `@unmask` directives. The original code performed 6+ full AST traversals per unique document to detect and process these directives. By defaulting these values, we eliminate that overhead entirely. Original code preserved as comments for reference.
