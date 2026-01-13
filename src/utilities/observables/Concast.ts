@@ -194,7 +194,8 @@ export class Concast<T> extends Observable<T> {
         // eventually have been initialized to a non-empty array.
         const value = sources.shift();
         if (!value) {
-          if (sub) setTimeout(() => sub.unsubscribe());
+          // if (sub) setTimeout(() => sub.unsubscribe());
+          if (sub) sub.unsubscribe();
           this.sub = null;
           if (this.latest && this.latest[0] === "next") {
             this.resolve(this.latest[1]);
