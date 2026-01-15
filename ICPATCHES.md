@@ -48,3 +48,20 @@ Commented out unused imports: `addNonReactiveToNamedFragments`, `hasDirectives`,
 **Why:**
 
 We don't use `@client`, `@export`, `@nonreactive`, `@connection`, or `@unmask` directives. The original code performed 6+ full AST traversals per unique document to detect and process these directives. By defaulting these values, we eliminate that overhead entirely. Original code preserved as comments for reference.
+
+---
+
+### Commit 4: `dont use settimeout in concast complete` (aba0aedc8)
+
+**Changes:**
+
+**`Concast.ts`** - Replaced `setTimeout()` with `queueMicrotask()` for unsubscribe deferral:
+
+```diff
+- if (sub) setTimeout(() => sub.unsubscribe());
++ if (sub) queueMicrotask(() => sub.unsubscribe());
+```
+
+**Why:**
+
+Similar to the `useQuery` fix, this eliminates an expensive `setTimeout` call. However, unlike that fix where we could make the unsubscribe fully synchronous, removing the deferral here caused an observable race condition. Using `queueMicrotask()` provides the necessary deferral while avoiding `setTimeout` overhead.
