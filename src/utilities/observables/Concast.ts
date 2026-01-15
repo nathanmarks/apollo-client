@@ -195,7 +195,7 @@ export class Concast<T> extends Observable<T> {
         const value = sources.shift();
         if (!value) {
           // if (sub) setTimeout(() => sub.unsubscribe());
-          if (sub) sub.unsubscribe();
+          if (sub) queueMicrotask(() => sub.unsubscribe());
           this.sub = null;
           if (this.latest && this.latest[0] === "next") {
             this.resolve(this.latest[1]);
