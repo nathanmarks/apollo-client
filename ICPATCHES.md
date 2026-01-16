@@ -80,4 +80,42 @@ Similar to the `useQuery` fix, this eliminates an expensive `setTimeout` call. H
 
 **Why:**
 
-The upstream refactor that removed `useHandleSkip` introduced a bug. Reverting to the previous pattern with `useHandleSkip` as a separate hook restores correct behavior.
+The upstream refactor introduced a bug where `useQuery` would fail to re-render with new data.
+
+**Root Cause:**
+
+The refactor added `resultOverride` and `currentResultOverride` computed via `useMemo`:
+
+```typescript
+const currentResultOverride = React.useMemo(
+  () => resultOverride && toQueryResult(resultOverride, ...),
+  [client, observable, resultOverride, previousData]
+);
+
+useSyncExternalStore(
+  subscribe,
+  () => currentResultOverride || getCurrentResult(resultData, ...),  // getSnapshot
+  ...
+);
+```
+
+When `resultOverride` was truthy (e.g., `skip: true`), the snapshot function always returned `currentResultOverride`—a memoized value unchanged when `resultData.current` was updated.
+
+So when `onNext` fired:
+1. `setResult()` updated `resultData.current` ✅
+2. `forceUpdate()` signaled to `useSyncExternalStore` ✅
+3. `getSnapshot()` returned `currentResultOverride` (unchanged memoized value) ❌
+4. React saw no change → **no re-render** ❌
+
+The component would only update when an external re-render recomputed `currentResultOverride`.
+
+**Why the old code worked:**
+
+With `useHandleSkip`, the flow was:
+1. `useHandleSkip` mutated `resultData.current` directly during render (for skip/SSR cases)
+2. `onNext` called `setResult()`, overwriting `resultData.current` with new data
+3. `forceUpdate()` triggered `useSyncExternalStore`
+4. `getSnapshot()` returned `getCurrentResult(resultData, ...)` → the fresh `resultData.current`
+5. React saw a new value → **re-render** ✅
+
+The old code didn't short-circuit the snapshot with a memoized override—it always read from `resultData.current`, which `setResult()` could mutate.
