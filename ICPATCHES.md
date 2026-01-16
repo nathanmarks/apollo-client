@@ -65,3 +65,19 @@ We don't use `@client`, `@export`, `@nonreactive`, `@connection`, or `@unmask` d
 **Why:**
 
 Similar to the `useQuery` fix, this eliminates an expensive `setTimeout` call. However, unlike that fix where we could make the unsubscribe fully synchronous, removing the deferral here caused an observable race condition. Using `queueMicrotask()` provides the necessary deferral while avoiding `setTimeout` overhead.
+
+---
+
+### Commit 5: `revert useHandleSkip removal`
+
+**Changes:**
+
+**`useQuery.ts`** - Reverted upstream commit `e29e90807f0a790e1490c418836e02651db2521a` ("remove `useHandleSkip`"):
+
+- Restored the `useHandleSkip` hook
+- Changed `useObservableSubscriptionResult` back to accept `skipSubscribing: boolean` instead of inline skip logic
+- Removed the inline `resultOverride`/`currentResultOverride` logic that replaced `useHandleSkip`
+
+**Why:**
+
+The upstream refactor that removed `useHandleSkip` introduced a bug. Reverting to the previous pattern with `useHandleSkip` as a separate hook restores correct behavior.
