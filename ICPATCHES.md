@@ -99,7 +99,9 @@ useSyncExternalStore(
 );
 ```
 
-When `resultOverride` was truthy (e.g., `skip: true`), the snapshot function always returned `currentResultOverride`—a memoized value unchanged when `resultData.current` was updated.
+When `resultOverride` was truthy, the snapshot function always returned `currentResultOverride`—a memoized value unchanged when `resultData.current` was updated.
+
+**Our specific case:** `disableNetworkFetches` is enabled during hydration and disabled after. The `resultOverride` logic checked this flag, so during hydration `currentResultOverride` would be set. When hydration completed and `disableNetworkFetches` was disabled, this alone didn't trigger a re-render—so the stale memoized `currentResultOverride` persisted.
 
 So when `onNext` fired:
 1. `setResult()` updated `resultData.current` ✅
