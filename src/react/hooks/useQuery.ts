@@ -69,11 +69,19 @@ type InternalQueryResult<TData, TVariables extends OperationVariables> = Omit<
 
 function noop() {}
 export const lastWatchOptions = Symbol();
+const originalResult = Symbol();
 
 export interface ObsQueryWithMeta<TData, TVariables extends OperationVariables>
   extends ObservableQuery<TData, TVariables> {
   [lastWatchOptions]?: WatchQueryOptions<TVariables, TData>;
 }
+
+type InternalQueryResultWithSymbol<
+  TData,
+  TVariables extends OperationVariables,
+> = InternalQueryResult<TData, TVariables> & {
+  [originalResult]?: ApolloQueryResult<MaybeMasked<TData>>;
+};
 
 export interface InternalResult<TData, TVariables extends OperationVariables> {
   // These members are populated by getCurrentResult and setResult, and it's
@@ -499,6 +507,10 @@ function useHandleSkip<
   disableNetworkFetches: boolean,
   isSyncSSR: boolean
 ) {
+  const current = resultData.current as
+    | InternalQueryResultWithSymbol<TData, TVariables>
+    | undefined;
+
   if (
     (isSyncSSR || disableNetworkFetches) &&
     options.ssr === false &&
@@ -506,12 +518,15 @@ function useHandleSkip<
   ) {
     // If SSR has been explicitly disabled, and this function has been called
     // on the server side, return the default loading state.
-    resultData.current = toQueryResult(
-      ssrDisabledResult,
-      resultData.previousData,
-      observable,
-      client
-    );
+    // Only create new result if not already an ssrDisabledResult (referential stability)
+    if (current?.[originalResult] !== ssrDisabledResult) {
+      resultData.current = toQueryResult(
+        ssrDisabledResult,
+        resultData.previousData,
+        observable,
+        client
+      );
+    }
   } else if (options.skip || watchQueryOptions.fetchPolicy === "standby") {
     // When skipping a query (ie. we're not querying for data but still want to
     // render children), make sure the `data` is cleared out and `loading` is
@@ -523,12 +538,23 @@ function useHandleSkip<
     // previously received data is all of a sudden removed. Unfortunately,
     // changing this is breaking, so we'll have to wait until Apollo Client 4.0
     // to address this.
-    resultData.current = toQueryResult(
-      skipStandbyResult,
-      resultData.previousData,
-      observable,
-      client
-    );
+    // Only create new result if not already a skipStandbyResult (referential stability)
+    if (current?.[originalResult] !== skipStandbyResult) {
+      resultData.current = toQueryResult(
+        skipStandbyResult,
+        resultData.previousData,
+        observable,
+        client
+      );
+    }
+  } else if (
+    // Reset result if the last render was skipping for some reason,
+    // but this render isn't skipping anymore
+    current &&
+    (current[originalResult] === ssrDisabledResult ||
+      current[originalResult] === skipStandbyResult)
+  ) {
+    resultData.current = void 0;
   }
 }
 
@@ -784,9 +810,9 @@ export function toQueryResult<TData, TVariables extends OperationVariables>(
   previousData: MaybeMasked<TData> | undefined,
   observable: ObservableQuery<TData, TVariables>,
   client: ApolloClient<object>
-): InternalQueryResult<TData, TVariables> {
+): InternalQueryResultWithSymbol<TData, TVariables> {
   const { data, partial, ...resultWithoutPartial } = result;
-  const queryResult: InternalQueryResult<TData, TVariables> = {
+  const queryResult: InternalQueryResultWithSymbol<TData, TVariables> = {
     data, // Ensure always defined, even if result.data is missing.
     ...resultWithoutPartial,
     client: client,
@@ -794,6 +820,7 @@ export function toQueryResult<TData, TVariables extends OperationVariables>(
     variables: observable.variables,
     called: result !== ssrDisabledResult && result !== skipStandbyResult,
     previousData,
+    [originalResult]: result,
   };
   return queryResult;
 }
