@@ -6,13 +6,18 @@
 
 1. **`ObservableQuery.ts`** - Changed `tearDownQuery()` to call `stopQueryNoBroadcast()` instead of `stopQuery()`
 2. **`QueryManager.ts`** - Changed `stopQueryNoBroadcast()` from `private` to `public`
-3. **`useQuery.ts`** - Removed `setTimeout()` wrapper around `subscription.current.unsubscribe()` in cleanup
+3. **`useQuery.ts`** - Replaced `setTimeout()` with `queueMicrotask()` for unsubscribe in cleanup:
+
+```diff
+- setTimeout(() => subscription.current.unsubscribe());
++ queueMicrotask(() => subscription.current.unsubscribe());
+```
 
 **Why:**
 
 - **`stopQueryNoBroadcast`**: Prevents a broadcast to all observers when tearing down a query, avoiding unnecessary overhead doing a check on all active queries/observers on the page. (Long-standing fix—the broadcast isn't needed and adds significant overhead.)
 
-- **`setTimeout` removal**: Eliminates expensive `setTimeout` calls at the bottom of long React call stacks (see [carrot#617929](https://github.com/instacart/carrot/pull/617929)). The edge case the `setTimeout` was protecting against isn't worth the performance impact.
+- **`queueMicrotask` for unsubscribe**: Eliminates expensive `setTimeout` calls at the bottom of long React call stacks (see [carrot#617929](https://github.com/instacart/carrot/pull/617929)). Making the unsubscribe fully synchronous caused a race condition where fast unsubscribe/resubscribe cycles would trigger extra network requests. `queueMicrotask()` provides just enough deferral to avoid this while being much lighter than `setTimeout`.
 
 ---
 
@@ -64,7 +69,7 @@ We don't use `@client`, `@export`, `@nonreactive`, `@connection`, or `@unmask` d
 
 **Why:**
 
-Similar to the `useQuery` fix, this eliminates an expensive `setTimeout` call. However, unlike that fix where we could make the unsubscribe fully synchronous, removing the deferral here caused an observable race condition. Using `queueMicrotask()` provides the necessary deferral while avoiding `setTimeout` overhead.
+Same pattern as `useQuery` (Commit 1): eliminates expensive `setTimeout` call while preserving the deferral needed to avoid race conditions.
 
 ---
 
@@ -121,3 +126,49 @@ With `useHandleSkip`, the flow was:
 5. React saw a new value → **re-render** ✅
 
 The old code didn't short-circuit the snapshot with a memoized override—it always read from `resultData.current`, which `setResult()` could mutate.
+
+---
+
+### Commit 6: `useQuery referential stability for skip results`
+
+**Changes:**
+
+**`useQuery.ts`** - Added referential stability for skip/SSR-disabled results:
+
+1. Added `originalResult` Symbol to track the source of each query result
+2. Modified `toQueryResult` to tag every result with its source: `[originalResult]: result`
+3. Modified `useHandleSkip` to:
+   - Only create new skip results if the current result isn't already from the same source
+   - Reset `resultData.current` when transitioning OUT of skip state
+
+```typescript
+// Preserve stability - only create new if source doesn't match
+if (resultData.current?.[originalResult] !== skipStandbyResult) {
+  resultData.current = toQueryResult(skipStandbyResult, ...);
+}
+
+// Reset when leaving skip state so getCurrentResult fetches fresh data
+else if (
+  resultData.current &&
+  (resultData.current[originalResult] === ssrDisabledResult ||
+    resultData.current[originalResult] === skipStandbyResult)
+) {
+  resultData.current = void 0;
+}
+```
+
+**Why:**
+
+Without this fix, `useQuery` with `skip: true` (or `useLazyQuery` before execution) returned a new object reference on every render. This caused infinite loops when the result was used as a `useEffect` dependency:
+
+```typescript
+const result = useQuery(query, { skip: true });
+
+useEffect(() => {
+  if (result) setReady(true);  // Infinite loop! result changes every render
+}, [result]);
+```
+
+The root cause: `useHandleSkip` unconditionally called `toQueryResult()` every render, creating a new object each time. By tracking the result source with a Symbol, we can check if we already have the correct skip result and preserve the existing reference.
+
+This pattern (using `originalResult` Symbol) comes from upstream PR #11954, which we partially reverted. We've now incorporated this specific piece for referential stability.

@@ -439,7 +439,7 @@ function useObservableSubscriptionResult<
         // request if "unsubscribe"  and "resubscribe" to the same ObservableQuery
         // happen in very fast succession.
         return () => {
-          return subscription.current.unsubscribe();
+          queueMicrotask(() => subscription.current.unsubscribe());
         };
       },
 
