@@ -187,7 +187,7 @@ Used a `toQueryResultCache` WeakMap to cache `QueryResult` objects:
 class InternalState {
   private toQueryResultCache = new WeakMap<ApolloQueryResult, QueryResult>();
   private skipStandbyResult = { loading: false, data: undefined, ... };  // Singleton
-  
+
   toQueryResult(result) {
     let cached = this.toQueryResultCache.get(result);
     if (cached) return cached;  // ← Same reference returned!
