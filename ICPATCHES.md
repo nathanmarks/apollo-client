@@ -172,3 +172,74 @@ useEffect(() => {
 The root cause: `useHandleSkip` unconditionally called `toQueryResult()` every render, creating a new object each time. By tracking the result source with a Symbol, we can check if we already have the correct skip result and preserve the existing reference.
 
 This pattern (using `originalResult` Symbol) comes from upstream PR #11954, which we partially reverted. We've now incorporated this specific piece for referential stability.
+
+---
+
+## Historical Context: Evolution of Referential Stability in `useQuery`
+
+Understanding how Apollo Client handled referential stability across versions explains why our fix works.
+
+### v3.10.8 (Class-based approach)
+
+Used a `toQueryResultCache` WeakMap to cache `QueryResult` objects:
+
+```typescript
+class InternalState {
+  private toQueryResultCache = new WeakMap<ApolloQueryResult, QueryResult>();
+  private skipStandbyResult = { loading: false, data: undefined, ... };  // Singleton
+  
+  toQueryResult(result) {
+    let cached = this.toQueryResultCache.get(result);
+    if (cached) return cached;  // ← Same reference returned!
+    // ... create and cache new result
+  }
+}
+```
+
+When `skip: true`:
+1. `this.result = this.skipStandbyResult` (same singleton every time)
+2. `toQueryResult(this.skipStandbyResult)` → cache hit → same `QueryResult` reference
+3. **Referentially stable** ✓
+
+### Commit e1b7ed789 (Functional refactor, pre-v3.11)
+
+Removed the class and `toQueryResultCache`. Introduced `originalResult` Symbol as replacement:
+
+```typescript
+const originalResult = Symbol();
+
+// In useHandleSkip:
+if (resultData.current?.[originalResult] === skipStandbyResult) {
+  // Already have skip result, don't recreate
+}
+```
+
+This achieved stability without caching—by checking the source before creating new results.
+**Referentially stable** ✓
+
+### PR #11954 (v3.11.0-rc.2 → v3.12.x)
+
+Removed `useHandleSkip` and the `originalResult` Symbol (called it "now-obsolete"). Replaced with:
+
+```typescript
+const currentResultOverride = React.useMemo(
+  () => resultOverride && toQueryResult(resultOverride, ...),
+  [client, observable, resultOverride, previousData]
+);
+```
+
+The `useMemo` was supposed to provide stability. But this introduced two bugs:
+1. **Hydration transition bug**: `disableNetworkFetches` changes didn't trigger re-render
+2. **Lost the explicit source tracking**: No way to know if current result is from skip
+
+**Broken** ✗
+
+### Our Fix (This Branch)
+
+Restored `useHandleSkip` + re-added `originalResult` Symbol pattern. This is the correct approach because:
+
+1. **Why not WeakMap caching?** The current `toQueryResult(result, previousData, observable, client)` signature means caching by `result` alone would return stale data if `previousData` or `variables` change while staying in skip state.
+
+2. **Why `originalResult` Symbol works**: It doesn't cache—it just checks "is this already from the skip source?" and only recreates when necessary. Changes to `previousData`/`variables` naturally flow through when `useHandleSkip` decides to regenerate.
+
+3. **Why `useMemo` failed**: It cached the *output* but couldn't detect when the underlying state (`resultData.current`) was mutated by `setResult()`, leading to stale snapshots.
