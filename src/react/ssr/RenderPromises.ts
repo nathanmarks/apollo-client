@@ -30,8 +30,9 @@ export class RenderPromises {
   // Map from Query component instances to pending fetchData promises.
   private queryPromises = new Map<QueryDataOptions<any, any>, Promise<any>>();
 
-  // Misc promises :)
+  // Misc promises and their resolved results
   private miscPromises = new Map<string, Promise<any>>();
+  private miscResults = new Map<string, any>();
 
   // Two-layered map from (query document, stringified variables) to QueryInfo
   // objects. These QueryInfo objects are intended to survive through the whole
@@ -44,14 +45,28 @@ export class RenderPromises {
     if (!this.stopped) {
       this.queryPromises.clear();
       this.miscPromises.clear();
+      this.miscResults.clear();
       this.queryInfoTrie = makeQueryInfoTrie();
       this.stopped = true;
     }
   }
 
-  public addMiscPromise(key: string,promise: Promise<any>) {
+  public addMiscPromise<T>(key: string, promise: Promise<T>): void {
     if (this.stopped) return;
-    this.miscPromises.set(key, promise);
+    // Already have this key (pending or completed) - never replace
+    if (this.miscPromises.has(key) || this.miscResults.has(key)) return;
+
+    // Wrap to capture the resolved value
+    const wrappedPromise = promise.then((result) => {
+      this.miscResults.set(key, result);
+      return result;
+    });
+
+    this.miscPromises.set(key, wrappedPromise);
+  }
+
+  public getMiscResult<T>(key: string): T | undefined {
+    return this.miscResults.get(key);
   }
 
   // Registers the server side rendered observable.

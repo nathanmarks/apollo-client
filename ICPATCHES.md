@@ -175,6 +175,73 @@ This pattern (using `originalResult` Symbol) comes from upstream PR #11954, whic
 
 ---
 
+### Commit 7: `misc render promises - result storage and loop prevention`
+
+Enhances the misc promises infrastructure (from Commit 2) with result storage and loop prevention:
+
+**Changes:**
+
+**`RenderPromises.ts`** - Added result storage and deduplication:
+
+1. `miscResults` map - stores resolved values (persists across `consumeAndAwaitPromises()` calls)
+2. Enhanced `addMiscPromise<T>(key, promise)` - now checks both maps and auto-captures resolved value
+3. `getMiscResult<T>(key)` - retrieves the stored result by key
+
+```typescript
+public addMiscPromise<T>(key: string, promise: Promise<T>): void {
+  if (this.stopped) return;
+  // Already have this key (pending or completed) - never replace
+  if (this.miscPromises.has(key) || this.miscResults.has(key)) return;
+
+  // Wrap to capture the resolved value
+  const wrappedPromise = promise.then((result) => {
+    this.miscResults.set(key, result);
+    return result;
+  });
+
+  this.miscPromises.set(key, wrappedPromise);
+}
+
+public getMiscResult<T>(key: string): T | undefined {
+  return this.miscResults.get(key);
+}
+```
+
+**Key behaviors:**
+
+- **Loop prevention**: Once a key is added (either pending in `miscPromises` or completed in `miscResults`), subsequent calls with the same key are no-ops. This prevents infinite loops during SSR render passes.
+- **Auto-capture**: The promise is wrapped to automatically store its resolved value in `miscResults`
+- **Persistence**: `miscResults` survives `consumeAndAwaitPromises()` calls, allowing retrieval across render passes
+- **Cleanup**: Both maps cleared during `stop()`
+
+**Usage flow:**
+
+```typescript
+// First render - claims the key immediately
+renderPromises.addMiscPromise("myKey", fetchSomething());
+
+// Same render pass - no-op (key in miscPromises)
+renderPromises.addMiscPromise("myKey", fetchSomething());
+
+// After consumeAndAwaitPromises() - result captured in miscResults
+
+// Next render pass - no-op (key in miscResults)
+renderPromises.addMiscPromise("myKey", fetchSomething());
+
+// Retrieve the resolved value
+const thing = renderPromises.getMiscResult<MyType>("myKey");
+```
+
+**Why:**
+
+The original implementation (Commit 2) had no way to:
+1. Prevent duplicate promises for the same key (risking infinite loops)
+2. Store and retrieve the resolved value after the promise completed
+
+The enhanced version ensures a key can only be claimed once (checking both pending and completed maps), and automatically captures the resolved value for later retrieval.
+
+---
+
 ## Historical Context: Evolution of Referential Stability in `useQuery`
 
 Understanding how Apollo Client handled referential stability across versions explains why our fix works.
