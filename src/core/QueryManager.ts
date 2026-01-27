@@ -1173,11 +1173,14 @@ export class QueryManager<TStore> {
       context = operation.context;
 
       if (deduplication) {
-        const printedServerQuery = print(serverQuery);
         const varJson = canonicalStringify(variables);
+        // IC: Use operation name for deduplication key instead of expensive print().
+        // Our operation names are unique, so this is sufficient.
+        // Fall back to print() only if operation name is somehow undefined.
+        const dedupeKey = operation.operationName || print(serverQuery);
 
         const entry = inFlightLinkObservables.lookup(
-          printedServerQuery,
+          dedupeKey,
           varJson
         );
 
@@ -1189,7 +1192,7 @@ export class QueryManager<TStore> {
           observable = entry.observable = concast;
 
           concast.beforeNext(() => {
-            inFlightLinkObservables.remove(printedServerQuery, varJson);
+            inFlightLinkObservables.remove(dedupeKey, varJson);
           });
         }
       } else {

@@ -242,6 +242,46 @@ The enhanced version ensures a key can only be claimed once (checking both pendi
 
 ---
 
+### Use operation name for deduplication instead of `print()`
+
+**Changes:**
+
+**`QueryManager.ts`** - Replaced `print(serverQuery)` with `operation.operationName` for deduplication key:
+
+```diff
+  if (deduplication) {
+-   const printedServerQuery = print(serverQuery);
+    const varJson = canonicalStringify(variables);
++   // IC: Use operation name for deduplication key instead of expensive print().
++   // Our operation names are unique, so this is sufficient.
++   // Fall back to print() only if operation name is somehow undefined.
++   const dedupeKey = operation.operationName || print(serverQuery);
+
+    const entry = inFlightLinkObservables.lookup(
+-     printedServerQuery,
++     dedupeKey,
+      varJson
+    );
+    // ...
+    concast.beforeNext(() => {
+-     inFlightLinkObservables.remove(printedServerQuery, varJson);
++     inFlightLinkObservables.remove(dedupeKey, varJson);
+    });
+  }
+```
+
+**Why:**
+
+The `print()` function from `graphql-js` traverses the entire AST and builds a string representation. For large queries, this is expensive—especially on older hardware. While Apollo has a `printCache`, the first call for each unique `DocumentNode` still pays the full traversal cost.
+
+This was on the **critical path**: `print()` was called in `getObservableFromLink()` *before* the network request could begin, blocking initial data fetching.
+
+**Our operation names are unique**, so the operation name is sufficient as a deduplication key. The `print()` call is now only a fallback for the edge case of queries without operation names.
+
+Other `print()` usages (e.g., HTTP link serializing the request body) happen *after* the deduplication check, inside the async observable chain—not on the critical path.
+
+---
+
 ## Historical Context: Evolution of Referential Stability in `useQuery`
 
 Understanding how Apollo Client handled referential stability across versions explains why our fix works.
