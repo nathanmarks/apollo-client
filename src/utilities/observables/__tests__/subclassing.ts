@@ -1,5 +1,4 @@
 import { Observable } from "../Observable";
-import { Concast } from "../Concast";
 
 function toArrayPromise<T>(observable: Observable<T>): Promise<T[]> {
   return new Promise<T[]>((resolve, reject) => {
@@ -17,26 +16,31 @@ function toArrayPromise<T>(observable: Observable<T>): Promise<T[]> {
 }
 
 describe("Observable subclassing", () => {
-  it("Symbol.species is defined for Concast subclass", () => {
-    const concast = new Concast([Observable.of(1, 2, 3), Observable.of(4, 5)]);
-    expect(concast).toBeInstanceOf(Concast);
+  it("Symbol.species is defined for Observable subclass", async () => {
+    const observable = Observable.of(1, 2, 3);
+    expect(observable).toBeInstanceOf(Observable);
 
-    const mapped = concast.map((n) => n * 2);
+    const mapped = observable.map((n) => n * 2);
     expect(mapped).toBeInstanceOf(Observable);
-    expect(mapped).not.toBeInstanceOf(Concast);
 
-    return toArrayPromise(mapped).then((doubles) => {
-      expect(doubles).toEqual([2, 4, 6, 8, 10]);
-    });
+    const doubles = await toArrayPromise(mapped);
+    expect(doubles).toEqual([2, 4, 6]);
   });
 
-  it("Inherited Concast.of static method returns a Concast", () => {
-    const concast = Concast.of("asdf", "qwer", "zxcv");
-    expect(concast).toBeInstanceOf(Observable);
-    expect(concast).toBeInstanceOf(Concast);
+  it("Observable.of static method returns an Observable", async () => {
+    const observable = Observable.of("asdf", "qwer", "zxcv");
+    expect(observable).toBeInstanceOf(Observable);
 
-    return toArrayPromise(concast).then((values) => {
-      expect(values).toEqual(["asdf", "qwer", "zxcv"]);
-    });
+    const values = await toArrayPromise(observable);
+    expect(values).toEqual(["asdf", "qwer", "zxcv"]);
+  });
+
+  it("Observable.concat chains observables", async () => {
+    const first = Observable.of(1, 2);
+    const second = Observable.of(3, 4);
+    const concatenated = first.concat(second);
+
+    const values = await toArrayPromise(concatenated);
+    expect(values).toEqual([1, 2, 3, 4]);
   });
 });

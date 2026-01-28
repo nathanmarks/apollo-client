@@ -350,3 +350,133 @@ Restored `useHandleSkip` + re-added `originalResult` Symbol pattern. This is the
 2. **Why `originalResult` Symbol works**: It doesn't cache—it just checks "is this already from the skip source?" and only recreates when necessary. Changes to `previousData`/`variables` naturally flow through when `useHandleSkip` decides to regenerate.
 
 3. **Why `useMemo` failed**: It cached the *output* but couldn't detect when the underlying state (`resultData.current`) was mutated by `setResult()`, leading to stale snapshots.
+
+---
+
+### Concast Removal: Replace with zen-observable Primitives
+
+**Changes:**
+
+Removed the `Concast` class entirely and replaced its functionality with direct `zen-observable` usage. This eliminates significant overhead from the query execution path.
+
+**Files Modified:**
+
+| File | Changes |
+|------|---------|
+| `Concast.ts` | **Deleted** |
+| `Concast.test.ts` | **Deleted** |
+| `utilities/index.ts` | Removed `Concast` export |
+| `QueryManager.ts` | Replaced `Concast` with `Observable`, added `eagerConcat()` helper |
+| `ObservableQuery.ts` | Replaced `concast`/`observer` properties with `fetchSubscription` |
+| `useLazyQuery.ts` | Updated to use `reobserve()` Promise instead of `reobserveAsConcast()` |
+| `subclassing.ts` | Removed `Concast` references |
+
+**Key Implementation Details:**
+
+1. **`QueryManager.fetchQueryObservable()`** (renamed from `fetchConcastWithInfo`):
+   - Returns `Observable<ApolloQueryResult<TData>>` instead of `Concast`
+   - Uses `Observable.of()` for cache results
+   - Uses `eagerConcat()` for cache-then-network patterns
+
+2. **`QueryManager.eagerConcat()`** - New helper method:
+   ```typescript
+   private eagerConcat<T>(first: Observable<T>, second: Observable<T>): Observable<T>
+   ```
+   Subscribes to both observables immediately (synchronously) rather than waiting for the first to complete. This is critical because zen-observable's native `concat()` uses buffered notification delivery, which delays subscription to the second observable.
+
+3. **`QueryManager.getObservableFromLink()`** - Custom multicasting:
+   - Implements late-subscriber replay (stores last emitted value)
+   - Manages subscriber set for multicasting
+   - Calls `inFlightLinkObservables.remove()` on first emission
+
+4. **`ObservableQuery.reobserveInternal()`** - New private method:
+   - Manages subscription lifecycle
+   - Handles promise resolution for `reobserve()` callers
+   - Distinguishes "disposable" subscriptions (refetch, fetchMore, poll) from main subscription
+
+**Why zen-observable's `concat()` Doesn't Work:**
+
+zen-observable uses buffered/async notification delivery:
+
+```javascript
+// When subscribing to cacheObs.concat(linkObs):
+// 1. Subscribe to concat
+// 2. Cache observable emits, but notification is BUFFERED
+// 3. subscribe() returns (before cache value delivered!)
+// 4. Later, buffered notifications flush
+// 5. Only THEN does concat subscribe to link observable
+```
+
+This broke tests where the link observer needed to be captured synchronously. The old `Concast` subscribed to sources eagerly in its constructor, so the link was subscribed to immediately.
+
+**`eagerConcat()` Solution:**
+
+```typescript
+private eagerConcat<T>(first: Observable<T>, second: Observable<T>): Observable<T> {
+  return new Observable<T>((observer) => {
+    const firstQueue: T[] = [];
+    const secondQueue: T[] = [];
+    let firstComplete = false;
+    let secondComplete = false;
+
+    // Subscribe to BOTH immediately
+    const firstSub = first.subscribe({
+      next: (v) => { firstQueue.push(v); flushQueues(); },
+      complete: () => { firstComplete = true; flushQueues(); },
+      // ...
+    });
+
+    const secondSub = second.subscribe({
+      next: (v) => { secondQueue.push(v); flushQueues(); },
+      complete: () => { secondComplete = true; flushQueues(); },
+      // ...
+    });
+
+    // Flush in order: all first values, then second values (only after first completes)
+    const flushQueues = () => {
+      while (firstQueue.length) observer.next?.(firstQueue.shift()!);
+      if (firstComplete) {
+        while (secondQueue.length) observer.next?.(secondQueue.shift()!);
+      }
+      if (firstComplete && secondComplete) observer.complete?.();
+    };
+
+    return () => { firstSub.unsubscribe(); secondSub.unsubscribe(); };
+  });
+}
+```
+
+**Concast Overhead Eliminated:**
+
+The old `Concast` class had significant overhead:
+- Eager `Promise` creation (for `.promise` property)
+- `Set` creation for observers
+- `Array.from()` calls to iterate observers
+- Multiple closures per instance
+- `resolve`/`reject` function allocations
+
+**Breaking Change:**
+
+`Concast` is no longer exported from `@apollo/client/utilities`. This is an undocumented internal class, but any code that imported it directly will break.
+
+**Test Impact:**
+
+9 tests fail after this change, but **none are caused by the Concast removal**:
+
+1. **@client directive tests** (7 tests) - Fail because of the earlier IC patch that disables `@client`/`@export` directive processing (`hasForcedResolvers: false`)
+
+2. **Subscription context test** - Pre-existing test issue (doesn't subscribe to the returned Observable)
+
+3. **Context modification test** - Unrelated timing issue
+
+**Comparison with Apollo Client v4:**
+
+v4 uses RxJS instead of zen-observable and replaced `Concast` with:
+- `BehaviorSubject` for storing current result
+- `Observable` operators (`tap`, `filterMap`, `concat`)
+- Direct push to subject from `reobserve()` instead of creating new observable wrappers
+
+Our approach achieves similar benefits within the v3 architecture by:
+- Eliminating `Concast` class overhead
+- Using native `Observable` with eager subscription
+- Managing state directly in `ObservableQuery`

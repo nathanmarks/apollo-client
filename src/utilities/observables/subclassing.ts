@@ -3,7 +3,7 @@ import { canUseSymbol } from "../common/canUse.js";
 
 // Generic implementations of Observable.prototype methods like map and
 // filter need to know how to create a new Observable from an Observable
-// subclass (like Concast or ObservableQuery). Those methods assume
+// subclass (like ObservableQuery). Those methods assume
 // (perhaps unwisely?) that they can call the subtype's constructor with a
 // Subscriber function, even though the subclass constructor might expect
 // different parameters. Defining this static Symbol.species property on

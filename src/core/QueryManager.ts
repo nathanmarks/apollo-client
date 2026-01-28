@@ -20,10 +20,7 @@ import {
 import type { Cache, ApolloCache } from "../cache/index.js";
 import { canonicalStringify } from "../cache/index.js";
 
-import type {
-  ObservableSubscription,
-  ConcastSourcesArray,
-} from "../utilities/index.js";
+import type { ObservableSubscription } from "../utilities/index.js";
 import {
   getDefaultValues,
   getOperationDefinition,
@@ -35,7 +32,6 @@ import {
   Observable,
   asyncMap,
   isNonEmptyArray,
-  Concast,
   makeUniqueId,
   isDocumentNode,
   isNonNullObject,
@@ -81,7 +77,6 @@ import type { ApolloErrorOptions } from "../errors/index.js";
 import { PROTOCOL_ERRORS_SYMBOL } from "../errors/index.js";
 import { print } from "../utilities/index.js";
 import type { IgnoreModifier } from "../cache/core/types/common.js";
-import type { TODO } from "../utilities/types/TODO.js";
 
 const { hasOwnProperty } = Object.prototype;
 
@@ -660,8 +655,21 @@ export class QueryManager<TStore> {
     options: WatchQueryOptions<TVars, TData>,
     networkStatus?: NetworkStatus
   ): Promise<ApolloQueryResult<TData>> {
-    return this.fetchConcastWithInfo(queryId, options, networkStatus).concast
-      .promise as TODO;
+    return new Promise((resolve, reject) => {
+      const { observable } = this.fetchQueryObservable(
+        queryId,
+        options,
+        networkStatus
+      );
+      let lastResult: ApolloQueryResult<TData> | undefined;
+      observable.subscribe({
+        next: (result) => {
+          lastResult = result;
+        },
+        error: reject,
+        complete: () => resolve(lastResult as ApolloQueryResult<TData>),
+      });
+    });
   }
 
   public getQueryStore() {
@@ -1186,22 +1194,84 @@ export class QueryManager<TStore> {
 
         observable = entry.observable;
         if (!observable) {
-          const concast = new Concast([
-            execute(link, operation) as Observable<FetchResult<T>>,
-          ]);
-          observable = entry.observable = concast;
+          // Create a multicast observable for deduplication
+          const sourceObservable = execute(link, operation) as Observable<
+            FetchResult<T>
+          >;
+          let cleaned = false;
+          const cleanup = () => {
+            if (!cleaned) {
+              cleaned = true;
+              inFlightLinkObservables.remove(dedupeKey, varJson);
+            }
+          };
 
-          concast.beforeNext(() => {
-            inFlightLinkObservables.remove(dedupeKey, varJson);
-          });
+          // Create a shared observable that multicasts to all subscribers
+          const observers = new Set<{
+            next?: (value: FetchResult<T>) => void;
+            error?: (error: any) => void;
+            complete?: () => void;
+          }>();
+          let subscription: ObservableSubscription | null = null;
+          let lastResult: FetchResult<T> | undefined;
+          let lastError: any;
+          let completed = false;
+          let errored = false;
+
+          observable = entry.observable = new Observable<FetchResult<T>>(
+            (observer) => {
+              // If already completed, deliver cached result
+              if (completed) {
+                if (lastResult !== undefined) {
+                  observer.next?.(lastResult);
+                }
+                observer.complete?.();
+                return () => {};
+              }
+              if (errored) {
+                observer.error?.(lastError);
+                return () => {};
+              }
+
+              observers.add(observer);
+
+              // Start subscription on first observer
+              if (!subscription) {
+                subscription = sourceObservable.subscribe({
+                  next(result) {
+                    cleanup();
+                    lastResult = result;
+                    observers.forEach((obs) => obs.next?.(result));
+                  },
+                  error(error) {
+                    cleanup();
+                    errored = true;
+                    lastError = error;
+                    observers.forEach((obs) => obs.error?.(error));
+                    observers.clear();
+                  },
+                  complete() {
+                    completed = true;
+                    observers.forEach((obs) => obs.complete?.());
+                    observers.clear();
+                  },
+                });
+              } else if (lastResult !== undefined) {
+                // Late subscriber gets the cached result
+                observer.next?.(lastResult);
+              }
+
+              return () => {
+                observers.delete(observer);
+              };
+            }
+          );
         }
       } else {
-        observable = new Concast([
-          execute(link, operation) as Observable<FetchResult<T>>,
-        ]);
+        observable = execute(link, operation) as Observable<FetchResult<T>>;
       }
     } else {
-      observable = new Concast([Observable.of({ data: {} } as FetchResult<T>)]);
+      observable = Observable.of({ data: {} } as FetchResult<T>);
       context = this.prepareContext(context);
     }
 
@@ -1307,7 +1377,7 @@ export class QueryManager<TStore> {
     );
   }
 
-  private fetchConcastWithInfo<TData, TVars extends OperationVariables>(
+  private fetchQueryObservable<TData, TVars extends OperationVariables>(
     queryId: string,
     options: WatchQueryOptions<TVars, TData>,
     // The initial networkStatus for this fetch, most often
@@ -1315,7 +1385,7 @@ export class QueryManager<TStore> {
     // or setVariables.
     networkStatus = NetworkStatus.loading,
     query = options.query
-  ): ConcastAndInfo<TData> {
+  ): ObservableAndInfo<TData> {
     const variables = this.getVariables(query, options.variables) as TVars;
     const queryInfo = this.getQuery(queryId);
 
@@ -1338,13 +1408,13 @@ export class QueryManager<TStore> {
       context,
     });
 
-    const fromVariables = (variables: TVars) => {
+    const fromVariables = (variables: TVars): ObservableAndInfo<TData> => {
       // Since normalized is always a fresh copy of options, it's safe to
       // modify its properties here, rather than creating yet another new
       // WatchQueryOptions object.
       normalized.variables = variables;
 
-      const sourcesWithInfo = this.fetchQueryByPolicy<TData, TVars>(
+      const obsWithInfo = this.fetchQueryByPolicy<TData, TVars>(
         queryInfo,
         normalized,
         networkStatus
@@ -1354,9 +1424,6 @@ export class QueryManager<TStore> {
         // If we're in standby, postpone advancing options.fetchPolicy using
         // applyNextFetchPolicy.
         normalized.fetchPolicy !== "standby" &&
-        // The "standby" policy currently returns [] from fetchQueryByPolicy, so
-        // this is another way to detect when nothing was done/fetched.
-        sourcesWithInfo.sources.length > 0 &&
         queryInfo.observableQuery
       ) {
         queryInfo.observableQuery["applyNextFetchPolicy"](
@@ -1365,20 +1432,35 @@ export class QueryManager<TStore> {
         );
       }
 
-      return sourcesWithInfo;
+      return obsWithInfo;
     };
 
-    // This cancel function needs to be set before the concast is created,
-    // in case concast creation synchronously cancels the request.
+    // Track the current observer for cancellation
+    let currentObserver: {
+      next?: (value: ApolloQueryResult<TData>) => void;
+      error?: (error: any) => void;
+      complete?: () => void;
+    } | null = null;
+    let currentSubscription: ObservableSubscription | null = null;
+    let canceled = false;
     const cleanupCancelFn = () => this.fetchCancelFns.delete(queryId);
+
     this.fetchCancelFns.set(queryId, (reason) => {
       cleanupCancelFn();
-      // This delay ensures the concast variable has been initialized.
-      setTimeout(() => concast.cancel(reason));
+      canceled = true;
+      // Emit error to the observer and unsubscribe
+      if (currentObserver?.error) {
+        currentObserver.error(reason);
+      }
+      if (currentSubscription) {
+        currentSubscription.unsubscribe();
+        currentSubscription = null;
+      }
     });
 
-    let concast: Concast<ApolloQueryResult<TData>>,
-      containsDataFromLink: boolean;
+    let observable: Observable<ApolloQueryResult<TData>>;
+    let containsDataFromLink: boolean;
+
     // If the query has @export(as: ...) directives, then we need to
     // process those directives asynchronously. When there are no
     // @export directives (the common case), we deliberately avoid
@@ -1387,16 +1469,41 @@ export class QueryManager<TStore> {
     // for backwards compatibility. TODO This code could be simpler if
     // we deprecated and removed LocalState.
     if (this.getDocumentInfo(normalized.query).hasClientExports) {
-      concast = new Concast(
+      // Wrap the async variable resolution in an Observable
+      observable = new Observable<ApolloQueryResult<TData>>((observer) => {
+        currentObserver = observer;
+        if (canceled) {
+          return () => {};
+        }
+
+        let innerSubscription: ObservableSubscription | null = null;
+
         this.localState
           .addExportedVariables(
             normalized.query,
             normalized.variables,
             normalized.context
           )
-          .then(fromVariables)
-          .then((sourcesWithInfo) => sourcesWithInfo.sources)
-      );
+          .then((resolvedVariables) => {
+            if (canceled) return;
+            const obsWithInfo = fromVariables(resolvedVariables as TVars);
+            innerSubscription = obsWithInfo.observable.subscribe({
+              next: (result) => observer.next?.(result),
+              error: (error) => observer.error?.(error),
+              complete: () => observer.complete?.(),
+            });
+          })
+          .catch((error) => {
+            if (!canceled) observer.error?.(error);
+          });
+
+        return () => {
+          cleanupCancelFn();
+          innerSubscription?.unsubscribe();
+          currentObserver = null;
+        };
+      });
+
       // there is just no way we can synchronously get the *right* value here,
       // so we will assume `true`, which is the behaviour before the bug fix in
       // #10597. This means that bug is not fixed in that case, and is probably
@@ -1404,15 +1511,39 @@ export class QueryManager<TStore> {
       // directives.
       containsDataFromLink = true;
     } else {
-      const sourcesWithInfo = fromVariables(normalized.variables);
-      containsDataFromLink = sourcesWithInfo.fromLink;
-      concast = new Concast(sourcesWithInfo.sources);
+      const obsWithInfo = fromVariables(normalized.variables);
+      containsDataFromLink = obsWithInfo.fromLink;
+
+      // Wrap the observable to track subscription for cancellation and cleanup
+      observable = new Observable<ApolloQueryResult<TData>>((observer) => {
+        currentObserver = observer;
+        if (canceled) {
+          return () => {};
+        }
+
+        currentSubscription = obsWithInfo.observable.subscribe({
+          next: (result) => observer.next?.(result),
+          error: (error) => {
+            cleanupCancelFn();
+            observer.error?.(error);
+          },
+          complete: () => {
+            cleanupCancelFn();
+            observer.complete?.();
+          },
+        });
+
+        return () => {
+          cleanupCancelFn();
+          currentSubscription?.unsubscribe();
+          currentSubscription = null;
+          currentObserver = null;
+        };
+      });
     }
 
-    concast.promise.then(cleanupCancelFn, cleanupCancelFn);
-
     return {
-      concast,
+      observable,
       fromLink: containsDataFromLink,
     };
   }
@@ -1626,6 +1757,77 @@ export class QueryManager<TStore> {
       : data;
   }
 
+  /**
+   * Eagerly concatenates two observables, subscribing to the second immediately
+   * rather than waiting for the first to complete. This matches the behavior
+   * of the old Concast class which started consuming sources eagerly.
+   *
+   * Values are emitted in order: all from first, then all from second.
+   * Both are subscribed to synchronously when the returned observable is subscribed to.
+   */
+  private eagerConcat<T>(
+    first: Observable<T>,
+    second: Observable<T>
+  ): Observable<T> {
+    return new Observable<T>((observer) => {
+      // Separate queues for each observable to maintain order
+      const firstQueue: T[] = [];
+      const secondQueue: T[] = [];
+      let firstComplete = false;
+      let secondComplete = false;
+      let secondSubscription: ObservableSubscription | null = null;
+
+      const flushQueues = () => {
+        // Emit all first values first
+        while (firstQueue.length > 0) {
+          observer.next?.(firstQueue.shift()!);
+        }
+        // Then emit second values only if first is complete
+        if (firstComplete) {
+          while (secondQueue.length > 0) {
+            observer.next?.(secondQueue.shift()!);
+          }
+        }
+        // Complete if both are done
+        if (firstComplete && secondComplete) {
+          observer.complete?.();
+        }
+      };
+
+      // Subscribe to the first observable
+      const firstSubscription = first.subscribe({
+        next: (value) => {
+          firstQueue.push(value);
+          flushQueues();
+        },
+        error: (error) => observer.error?.(error),
+        complete: () => {
+          firstComplete = true;
+          flushQueues();
+        },
+      });
+
+      // Subscribe to the second observable immediately (eager)
+      secondSubscription = second.subscribe({
+        next: (value) => {
+          secondQueue.push(value);
+          flushQueues();
+        },
+        error: (error) => observer.error?.(error),
+        complete: () => {
+          secondComplete = true;
+          secondSubscription = null;
+          flushQueues();
+        },
+      });
+
+      return () => {
+        firstSubscription.unsubscribe();
+        secondSubscription?.unsubscribe();
+      };
+    });
+  }
+
   private fetchQueryByPolicy<TData, TVars extends OperationVariables>(
     queryInfo: QueryInfo,
     {
@@ -1642,7 +1844,7 @@ export class QueryManager<TStore> {
     // NetworkStatus.loading, but also possibly fetchMore, poll, refetch,
     // or setVariables.
     networkStatus: NetworkStatus
-  ): SourcesAndInfo<TData> {
+  ): ObservableAndInfo<TData> {
     const oldNetworkStatus = queryInfo.networkStatus;
 
     queryInfo.init({
@@ -1656,7 +1858,7 @@ export class QueryManager<TStore> {
     const resultsFromCache = (
       diff: Cache.DiffResult<TData>,
       networkStatus = queryInfo.networkStatus || NetworkStatus.loading
-    ) => {
+    ): Observable<ApolloQueryResult<TData>> => {
       const data = diff.result;
 
       if (__DEV__ && !returnPartialData && !equal(data, {})) {
@@ -1671,16 +1873,26 @@ export class QueryManager<TStore> {
           ...(diff.complete ? null : { partial: true }),
         } as ApolloQueryResult<TData>);
 
-      if (data && this.getDocumentInfo(query).hasForcedResolvers) {
-        return this.localState
-          .runResolvers({
-            document: query,
-            remoteResult: { data },
-            context,
-            variables,
-            onlyRunForcedResolvers: true,
-          })
-          .then((resolved) => fromData(resolved.data || void 0));
+      if (this.getDocumentInfo(query).hasForcedResolvers) {
+        // Convert Promise<Observable> to Observable using flatMap
+        // Run resolvers even if data is empty/undefined since forced resolvers
+        // (e.g., @client(always: true)) should always execute
+        return new Observable<ApolloQueryResult<TData>>((observer) => {
+          this.localState
+            .runResolvers({
+              document: query,
+              remoteResult: { data },
+              context,
+              variables,
+              onlyRunForcedResolvers: true,
+            })
+            .then(
+              (resolved) => {
+                fromData(resolved.data || void 0).subscribe(observer);
+              },
+              (error) => observer.error?.(error)
+            );
+        });
       }
 
       // Resolves https://github.com/apollographql/apollo-client/issues/10317.
@@ -1732,18 +1944,21 @@ export class QueryManager<TStore> {
         if (diff.complete) {
           return {
             fromLink: false,
-            sources: [resultsFromCache(diff, queryInfo.markReady())],
+            observable: resultsFromCache(diff, queryInfo.markReady()),
           };
         }
 
         if (returnPartialData || shouldNotify) {
           return {
             fromLink: true,
-            sources: [resultsFromCache(diff), resultsFromLink()],
+            observable: this.eagerConcat(
+              resultsFromCache(diff),
+              resultsFromLink()
+            ),
           };
         }
 
-        return { fromLink: true, sources: [resultsFromLink()] };
+        return { fromLink: true, observable: resultsFromLink() };
       }
 
       case "cache-and-network": {
@@ -1752,28 +1967,34 @@ export class QueryManager<TStore> {
         if (diff.complete || returnPartialData || shouldNotify) {
           return {
             fromLink: true,
-            sources: [resultsFromCache(diff), resultsFromLink()],
+            observable: this.eagerConcat(
+              resultsFromCache(diff),
+              resultsFromLink()
+            ),
           };
         }
 
-        return { fromLink: true, sources: [resultsFromLink()] };
+        return { fromLink: true, observable: resultsFromLink() };
       }
 
       case "cache-only":
         return {
           fromLink: false,
-          sources: [resultsFromCache(readCache(), queryInfo.markReady())],
+          observable: resultsFromCache(readCache(), queryInfo.markReady()),
         };
 
       case "network-only":
         if (shouldNotify) {
           return {
             fromLink: true,
-            sources: [resultsFromCache(readCache()), resultsFromLink()],
+            observable: this.eagerConcat(
+              resultsFromCache(readCache()),
+              resultsFromLink()
+            ),
           };
         }
 
-        return { fromLink: true, sources: [resultsFromLink()] };
+        return { fromLink: true, observable: resultsFromLink() };
 
       case "no-cache":
         if (shouldNotify) {
@@ -1782,14 +2003,22 @@ export class QueryManager<TStore> {
             // Note that queryInfo.getDiff() for no-cache queries does not call
             // cache.diff, but instead returns a { complete: false } stub result
             // when there is no queryInfo.diff already defined.
-            sources: [resultsFromCache(queryInfo.getDiff()), resultsFromLink()],
+            observable: this.eagerConcat(
+              resultsFromCache(queryInfo.getDiff()),
+              resultsFromLink()
+            ),
           };
         }
 
-        return { fromLink: true, sources: [resultsFromLink()] };
+        return { fromLink: true, observable: resultsFromLink() };
 
       case "standby":
-        return { fromLink: false, sources: [] };
+        return {
+          fromLink: false,
+          observable: new Observable<ApolloQueryResult<TData>>((observer) => {
+            observer.complete?.();
+          }),
+        };
     }
   }
 
@@ -1811,13 +2040,10 @@ export class QueryManager<TStore> {
 }
 
 // Return types used by fetchQueryByPolicy and other private methods above.
-interface FetchConcastInfo {
-  // Metadata properties that can be returned in addition to the Concast.
+interface FetchObservableInfo {
+  // Metadata properties that can be returned in addition to the Observable.
   fromLink: boolean;
 }
-interface SourcesAndInfo<TData> extends FetchConcastInfo {
-  sources: ConcastSourcesArray<ApolloQueryResult<TData>>;
-}
-interface ConcastAndInfo<TData> extends FetchConcastInfo {
-  concast: Concast<ApolloQueryResult<TData>>;
+interface ObservableAndInfo<TData> extends FetchObservableInfo {
+  observable: Observable<ApolloQueryResult<TData>>;
 }

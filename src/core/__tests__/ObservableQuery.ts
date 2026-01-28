@@ -38,13 +38,13 @@ import { waitFor } from "@testing-library/react";
 import { ObservableStream, spyOnConsole } from "../../testing/internal";
 
 export const mockFetchQuery = (queryManager: QueryManager<any>) => {
-  const fetchConcastWithInfo = queryManager["fetchConcastWithInfo"];
+  const fetchQueryObservable = queryManager["fetchQueryObservable"];
   const fetchQueryByPolicy: QueryManager<any>["fetchQueryByPolicy"] = (
     queryManager as any
   ).fetchQueryByPolicy;
 
   const mock = <
-    T extends typeof fetchConcastWithInfo | typeof fetchQueryByPolicy,
+    T extends typeof fetchQueryObservable | typeof fetchQueryByPolicy,
   >(
     original: T
   ) =>
@@ -54,7 +54,7 @@ export const mockFetchQuery = (queryManager: QueryManager<any>) => {
     });
 
   const mocks = {
-    fetchConcastWithInfo: mock(fetchConcastWithInfo),
+    fetchQueryObservable: mock(fetchQueryObservable),
     fetchQueryByPolicy: mock(fetchQueryByPolicy),
   };
 
@@ -1155,7 +1155,7 @@ describe("ObservableQuery", () => {
         expect(fqbpCalls[0][1].fetchPolicy).toEqual("cache-first");
         expect(fqbpCalls[1][1].fetchPolicy).toEqual("network-only");
 
-        const fqoCalls = mocks.fetchConcastWithInfo.mock.calls;
+        const fqoCalls = mocks.fetchQueryObservable.mock.calls;
         expect(fqoCalls.length).toBe(2);
         expect(fqoCalls[0][1].fetchPolicy).toEqual("cache-first");
         expect(fqoCalls[1][1].fetchPolicy).toEqual("network-only");
@@ -1300,7 +1300,7 @@ describe("ObservableQuery", () => {
       // FetchPolicy does not switch to cache-first after the first
       // network request.
       expect(observable.options.fetchPolicy).toBe("no-cache");
-      const fqoCalls = mocks.fetchConcastWithInfo.mock.calls;
+      const fqoCalls = mocks.fetchQueryObservable.mock.calls;
       expect(fqoCalls.length).toBe(2);
       expect(fqoCalls[1][1].fetchPolicy).toBe("no-cache");
     });

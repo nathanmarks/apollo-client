@@ -40,7 +40,7 @@ import { waitFor } from "@testing-library/react";
 import { wait } from "../../../testing/core";
 import { ApolloClient } from "../../../core";
 import { mockFetchQuery } from "../ObservableQuery";
-import { Concast, print } from "../../../utilities";
+import { print } from "../../../utilities";
 import { ObservableStream, spyOnConsole } from "../../../testing/internal";
 
 interface MockedMutation {
@@ -5968,7 +5968,7 @@ describe("QueryManager", () => {
       expect(
         queryManager["inFlightLinkObservables"].peek(print(query), "{}")
       ).toEqual({
-        observable: expect.any(Concast),
+        observable: expect.any(Observable),
       });
     });
 

@@ -3,11 +3,7 @@ import type { DocumentNode } from "graphql";
 import { equal } from "@wry/equality";
 
 import { NetworkStatus, isNetworkRequestInFlight } from "./networkStatus.js";
-import type {
-  Concast,
-  Observer,
-  ObservableSubscription,
-} from "../utilities/index.js";
+import type { Observer, ObservableSubscription } from "../utilities/index.js";
 import {
   cloneDeep,
   compact,
@@ -102,10 +98,8 @@ export class ObservableQuery<
 
   private queryInfo: QueryInfo;
 
-  // When this.concast is defined, this.observer is the Observer currently
-  // subscribed to that Concast.
-  private concast?: Concast<ApolloQueryResult<TData>>;
-  private observer?: Observer<ApolloQueryResult<TData>>;
+  // The current subscription to the fetch observable
+  private fetchSubscription?: ObservableSubscription;
 
   private pollingInfo?: {
     interval: number;
@@ -817,7 +811,7 @@ Did you mean to call refetch(variables) instead of refetch({ variables })?`,
     // TODO Make sure we update the networkStatus (and infer fetchVariables)
     // before actually committing to the fetch.
     this.queryManager.setObservableQuery(this);
-    return this.queryManager["fetchConcastWithInfo"](
+    return this.queryManager["fetchQueryObservable"](
       this.queryId,
       options,
       newNetworkStatus,
@@ -912,21 +906,29 @@ Did you mean to call refetch(variables) instead of refetch({ variables })?`,
     });
   }
 
-  public reobserveAsConcast(
+  /**
+   * Internal method to reobserve the query with new options.
+   * Returns subscription and promise for the operation.
+   */
+  private reobserveInternal(
     newOptions?: Partial<WatchQueryOptions<TVariables, TData>>,
     newNetworkStatus?: NetworkStatus
-  ): Concast<ApolloQueryResult<TData>> {
+  ): {
+    subscription: ObservableSubscription;
+    promise: Promise<ApolloQueryResult<TData>>;
+    fromLink: boolean;
+  } {
     this.isTornDown = false;
 
-    const useDisposableConcast =
-      // Refetching uses a disposable Concast to allow refetches using different
+    const useDisposableSubscription =
+      // Refetching uses a disposable subscription to allow refetches using different
       // options/variables, without permanently altering the options of the
       // original ObservableQuery.
       newNetworkStatus === NetworkStatus.refetch ||
       // The fetchMore method does not actually call the reobserve method, but,
-      // if it did, it would definitely use a disposable Concast.
+      // if it did, it would definitely use a disposable subscription.
       newNetworkStatus === NetworkStatus.fetchMore ||
-      // Polling uses a disposable Concast so the polling options (which force
+      // Polling uses a disposable subscription so the polling options (which force
       // fetchPolicy to be "network-only" or "no-cache") won't override the original options.
       newNetworkStatus === NetworkStatus.poll;
 
@@ -936,21 +938,21 @@ Did you mean to call refetch(variables) instead of refetch({ variables })?`,
 
     const mergedOptions = compact(this.options, newOptions || {});
     const options =
-      useDisposableConcast ?
-        // Disposable Concast fetches receive a shallow copy of this.options
+      useDisposableSubscription ?
+        // Disposable fetches receive a shallow copy of this.options
         // (merged with newOptions), leaving this.options unmodified.
         mergedOptions
       : assign(this.options, mergedOptions);
 
     // Don't update options.query with the transformed query to avoid
-    // overwriting this.options.query when we aren't using a disposable concast.
+    // overwriting this.options.query when we aren't using a disposable subscription.
     // We want to ensure we can re-run the custom document transforms the next
     // time a request is made against the original query.
     const query = this.transformDocument(options.query);
 
     this.lastQuery = query;
 
-    if (!useDisposableConcast) {
+    if (!useDisposableSubscription) {
       // We can skip calling updatePolling if we're not changing this.options.
       this.updatePolling();
 
@@ -977,59 +979,110 @@ Did you mean to call refetch(variables) instead of refetch({ variables })?`,
     }
 
     this.waitForOwnResult &&= skipCacheDataFor(options.fetchPolicy);
-    const finishWaitingForOwnResult = () => {
-      if (this.concast === concast) {
-        this.waitForOwnResult = false;
-      }
-    };
 
-    const variables = options.variables && { ...options.variables };
-    const { concast, fromLink } = this.fetch(options, newNetworkStatus, query);
-    const observer: Observer<ApolloQueryResult<TData>> = {
+    // Copy variables for comparison in the observer (handles undefined case)
+    const variables = options.variables ? { ...options.variables } : options.variables;
+    const { observable, fromLink } = this.fetch(
+      options,
+      newNetworkStatus,
+      query
+    );
+
+    // Create promise for the operation result
+    let lastResult: ApolloQueryResult<TData> | undefined;
+    let promiseResolve: (result: ApolloQueryResult<TData>) => void;
+    let promiseReject: (error: any) => void;
+    const promise = new Promise<ApolloQueryResult<TData>>((resolve, reject) => {
+      promiseResolve = resolve;
+      promiseReject = reject;
+    });
+
+    const subscription = observable.subscribe({
       next: (result) => {
+        lastResult = result;
         if (equal(this.variables, variables)) {
-          finishWaitingForOwnResult();
+          this.waitForOwnResult = false;
           this.reportResult(result, variables);
         }
       },
       error: (error) => {
         if (equal(this.variables, variables)) {
           // Coming from `getResultsFromLink`, `error` here should always be an `ApolloError`.
-          // However, calling `concast.cancel` can inject another type of error, so we have to
+          // However, cancellation can inject another type of error, so we have to
           // wrap it again here.
           if (!isApolloError(error)) {
             error = new ApolloError({ networkError: error });
           }
-          finishWaitingForOwnResult();
+          this.waitForOwnResult = false;
           this.reportError(error, variables);
         }
+        promiseReject(error);
       },
-    };
+      complete: () => {
+        // Resolve with the last result, or a partial result if no values were emitted
+        // This handles cases like empty links that complete without emitting
+        promiseResolve(
+          lastResult ||
+            ({
+              data: this.queryInfo.getDiff().result as TData,
+              loading: false,
+              networkStatus: NetworkStatus.ready,
+            } as ApolloQueryResult<TData>)
+        );
+      },
+    });
 
-    if (!useDisposableConcast && (fromLink || !this.concast)) {
-      // We use the {add,remove}Observer methods directly to avoid wrapping
-      // observer with an unnecessary SubscriptionObserver object.
-      if (this.concast && this.observer) {
-        this.concast.removeObserver(this.observer);
+    if (!useDisposableSubscription && (fromLink || !this.fetchSubscription)) {
+      // Unsubscribe from the previous fetch subscription
+      if (this.fetchSubscription) {
+        this.fetchSubscription.unsubscribe();
       }
-
-      this.concast = concast;
-      this.observer = observer;
+      this.fetchSubscription = subscription;
     }
 
-    concast.addObserver(observer);
+    return { subscription, promise, fromLink };
+  }
 
-    return concast;
+  /**
+   * @deprecated Use reobserve() instead. This method is kept for backward compatibility
+   * but returns an Observable instead of a Concast.
+   */
+  public reobserveAsConcast(
+    newOptions?: Partial<WatchQueryOptions<TVariables, TData>>,
+    newNetworkStatus?: NetworkStatus
+  ): Observable<ApolloQueryResult<TData>> & { promise: Promise<ApolloQueryResult<TData>> } {
+    const { promise } = this.reobserveInternal(newOptions, newNetworkStatus);
+
+    // Return an Observable that wraps the subscription and provides a promise property
+    const obs = new Observable<ApolloQueryResult<TData>>((observer) => {
+      const innerSub = this.fetch(
+        this.options,
+        newNetworkStatus,
+        this.lastQuery
+      ).observable.subscribe({
+        next: (result) => observer.next?.(result),
+        error: (error) => observer.error?.(error),
+        complete: () => observer.complete?.(),
+      });
+
+      return () => innerSub.unsubscribe();
+    }) as Observable<ApolloQueryResult<TData>> & {
+      promise: Promise<ApolloQueryResult<TData>>;
+    };
+
+    // Add promise property for backward compatibility
+    obs.promise = promise;
+
+    return obs;
   }
 
   public reobserve(
     newOptions?: Partial<WatchQueryOptions<TVariables, TData>>,
     newNetworkStatus?: NetworkStatus
   ): Promise<ApolloQueryResult<MaybeMasked<TData>>> {
+    const { promise } = this.reobserveInternal(newOptions, newNetworkStatus);
     return preventUnhandledRejection(
-      this.reobserveAsConcast(newOptions, newNetworkStatus).promise.then(
-        this.maskResult as TODO
-      )
+      promise.then(this.maskResult as TODO)
     );
   }
 
@@ -1112,10 +1165,11 @@ Did you mean to call refetch(variables) instead of refetch({ variables })?`,
 
   private tearDownQuery() {
     if (this.isTornDown) return;
-    if (this.concast && this.observer) {
-      this.concast.removeObserver(this.observer);
-      delete this.concast;
-      delete this.observer;
+
+    // Unsubscribe from the current fetch
+    if (this.fetchSubscription) {
+      this.fetchSubscription.unsubscribe();
+      this.fetchSubscription = undefined;
     }
 
     this.stopPolling();
