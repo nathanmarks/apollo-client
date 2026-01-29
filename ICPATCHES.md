@@ -186,6 +186,50 @@ We don't use `@client`, `@export`, `@nonreactive`, `@connection`, `@defer`, or `
 
 ---
 
+## Patch 4: Skip checkDocument in production
+
+**File:** `src/utilities/internal/checkDocument.ts`
+
+**Change:**
+
+Wrapped the entire `checkDocument` function (including memoization) in a `__DEV__` check:
+
+```diff
+  export const checkDocument: (
+    doc: DocumentNode,
+    expectedType?: OperationTypeNode
+- ) => void = memoize(
+-   (doc: DocumentNode, expectedType?: OperationTypeNode): void => {
+-     // validation logic...
+-   },
+-   { max: cacheSizes["checkDocument"] || defaultCacheSizes["checkDocument"] }
+- );
++ ) => void = __DEV__ ?
++   memoize(
++     (doc: DocumentNode, expectedType?: OperationTypeNode): void => {
++       // validation logic...
++     },
++     { max: cacheSizes["checkDocument"] || defaultCacheSizes["checkDocument"] }
++   )
++ : () => {};
+```
+
+**Why:**
+
+`checkDocument` validates GraphQL documents for:
+- Proper document structure (parsed via `gql` tag)
+- Single operation per document
+- Correct operation type (query vs mutation vs subscription)
+- No forbidden field aliases (`__typename`, `__ac_*`)
+
+These validations involve AST traversal via `visit()` and are called on every `watchQuery`, `query`, and `subscribe` call.
+
+With persisted document generation, all these checks happen at build time. Running them again at runtime in production is redundant overhead. The memoization cache also consumes memory unnecessarily in production.
+
+In development, all checks remain active for a good DX.
+
+---
+
 ## TODO: Misc Promises for SSR (prerenderStatic)
 
 **Status:** Not yet implemented
@@ -207,7 +251,7 @@ export interface PrerenderStaticInternalContext {
   // Existing
   getObservableQuery(query: DocumentNode, variables?: Record<string, any>): ObservableQuery | undefined;
   onCreatedObservableQuery: (observable: ObservableQuery, query: DocumentNode, variables: OperationVariables) => void;
-  
+
   // NEW: Misc promises support
   addMiscPromise<T>(key: string, promise: Promise<T>): void;
   getMiscResult<T>(key: string): T | undefined;
@@ -229,12 +273,12 @@ let recentlyAddedMiscPromises = new Set<Promise<unknown>>();
 addMiscPromise<T>(key: string, promise: Promise<T>): void {
   // Already tracked (pending or completed) - no-op for loop prevention
   if (miscPromises.has(key) || miscResults.has(key)) return;
-  
+
   const wrappedPromise = promise.then((result) => {
     miscResults.set(key, result);
     return result;
   });
-  
+
   miscPromises.set(key, wrappedPromise);
   recentlyAddedMiscPromises.add(wrappedPromise);
 }
