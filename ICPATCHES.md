@@ -157,3 +157,31 @@ This was on the **critical path**: `print()` was called in `getObservableFromLin
 **Our operation names are unique**, so the operation name is sufficient as a deduplication key. The `print()` call is now only a fallback for the edge case of queries without operation names.
 
 ---
+
+## Patch 3: Skip directive traversals in getDocumentInfo
+
+**File:** `src/core/QueryManager.ts`
+
+**Change:**
+
+Defaulted values in `getDocumentInfo()` to skip expensive AST traversals:
+
+| Property | Old Value | New Value |
+|----------|-----------|-----------|
+| `hasClientExports` | `hasDirectives(["client", "export"], document, true)` | `false` |
+| `hasForcedResolvers` | `hasForcedResolvers(document)` | `false` |
+| `hasNonreactiveDirective` | `hasDirectives(["nonreactive"], document)` | `false` |
+| `hasIncrementalDirective` | `hasDirectives(["defer"], document)` | `false` |
+| `nonReactiveQuery` | `addNonReactiveToNamedFragments(document)` | `document` |
+| `clientQuery` | `hasDirectives(["client"], document) ? document : null` | `null` |
+| `serverQuery` | `removeDirectivesFromDocument([...], document)` | `document` |
+
+Original code preserved as comments for reference.
+
+**Why:**
+
+We don't use `@client`, `@export`, `@nonreactive`, `@connection`, `@defer`, or `@unmask` directives. The original code performed 6+ full AST traversals per unique document to detect and process these directives. By defaulting these values, we eliminate that overhead entirely.
+
+**Note:** If you start using any of these directives, you'll need to re-enable the corresponding traversals.
+
+---
