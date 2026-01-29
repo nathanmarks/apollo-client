@@ -27,3 +27,20 @@ Eliminates expensive `setTimeout` calls at the bottom of long React call stacks.
 Same pattern as v3 patches, proven in production. The deferral only needs to be "after current synchronous code completes", which microtasks provide.
 
 ---
+
+## Patch 1b: `queueMicrotask` for useSubscription unsubscribe
+
+**File:** `src/react/hooks/useSubscription.ts`
+
+**Change:**
+
+```diff
+- setTimeout(() => subscription.unsubscribe());
++ queueMicrotask(() => subscription.unsubscribe());
+```
+
+**Why:**
+
+Same pattern as Patch 1a. Eliminates expensive `setTimeout` calls while maintaining the deferral needed to allow subscription reuse during fast unsubscribe/resubscribe cycles.
+
+---

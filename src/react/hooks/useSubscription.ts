@@ -350,7 +350,8 @@ export function useSubscription<
           // reusing the same underlying observable and is about to subscribe
           subscriptionStopped = true;
 
-          setTimeout(() => subscription.unsubscribe());
+          // IC: Use queueMicrotask instead of setTimeout for better performance.
+          queueMicrotask(() => subscription.unsubscribe());
         };
       },
       [observable]
