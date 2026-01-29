@@ -44,3 +44,29 @@ Same pattern as v3 patches, proven in production. The deferral only needs to be 
 Same pattern as Patch 1a. Eliminates expensive `setTimeout` calls while maintaining the deferral needed to allow subscription reuse during fast unsubscribe/resubscribe cycles.
 
 ---
+
+## Patch 1c: `queueMicrotask` for updatePolling
+
+**File:** `src/core/ObservableQuery.ts`
+
+**Change:**
+
+```diff
+- setTimeout(() => this.updatePolling());
++ queueMicrotask(() => this.updatePolling());
+```
+
+**Why:**
+
+The `tap({ subscribe: ... })` callback fires before `BehaviorSubject.observed` becomes `true`. The original `setTimeout` defers `updatePolling()` until after the subscription completes.
+
+`queueMicrotask` achieves the same result because:
+1. rxjs subscriptions are synchronous
+2. By the time `.subscribe()` returns, `observed` is `true`
+3. Microtasks run after the current synchronous code completes
+
+**Validation:**
+
+Tested with rxjs BehaviorSubject - confirmed that `subject.observed` is `true` by the time the microtask executes.
+
+---

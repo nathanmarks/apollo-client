@@ -449,7 +449,8 @@ export class ObservableQuery<
             // called before the subject is subscribed to so `updatePolling`
             // can't accurately detect if there is an active subscription.
             // Calling it again here ensures that it can detect if it can poll
-            setTimeout(() => this.updatePolling());
+            // IC: Use queueMicrotask - by the time it runs, subject.observed is true.
+            queueMicrotask(() => this.updatePolling());
           }
         },
         unsubscribe: () => {
