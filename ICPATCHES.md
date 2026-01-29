@@ -185,3 +185,83 @@ We don't use `@client`, `@export`, `@nonreactive`, `@connection`, `@defer`, or `
 **Note:** If you start using any of these directives, you'll need to re-enable the corresponding traversals.
 
 ---
+
+## TODO: Misc Promises for SSR (prerenderStatic)
+
+**Status:** Not yet implemented
+
+**File:** `src/react/ssr/prerenderStatic.tsx`
+
+**Purpose:**
+
+In v3, we extended `RenderPromises` to support arbitrary async work during SSR via `addMiscPromise()` and `getMiscResult()`. This allowed adding promises that contain Apollo queries not triggered via `useQuery` to the SSR render loop.
+
+V4 replaced `RenderPromises` with `prerenderStatic`, which has a different architecture. This patch would extend `prerenderStatic` to support similar functionality.
+
+**Proposed Changes:**
+
+1. Extend `PrerenderStaticInternalContext` interface:
+
+```typescript
+export interface PrerenderStaticInternalContext {
+  // Existing
+  getObservableQuery(query: DocumentNode, variables?: Record<string, any>): ObservableQuery | undefined;
+  onCreatedObservableQuery: (observable: ObservableQuery, query: DocumentNode, variables: OperationVariables) => void;
+  
+  // NEW: Misc promises support
+  addMiscPromise<T>(key: string, promise: Promise<T>): void;
+  getMiscResult<T>(key: string): T | undefined;
+  hasMiscPromise(key: string): boolean;
+}
+```
+
+2. Add tracking state in `prerenderStatic` function:
+
+```typescript
+const miscPromises = new Map<string, Promise<unknown>>();
+const miscResults = new Map<string, unknown>();
+let recentlyAddedMiscPromises = new Set<Promise<unknown>>();
+```
+
+3. Implement methods with loop prevention:
+
+```typescript
+addMiscPromise<T>(key: string, promise: Promise<T>): void {
+  // Already tracked (pending or completed) - no-op for loop prevention
+  if (miscPromises.has(key) || miscResults.has(key)) return;
+  
+  const wrappedPromise = promise.then((result) => {
+    miscResults.set(key, result);
+    return result;
+  });
+  
+  miscPromises.set(key, wrappedPromise);
+  recentlyAddedMiscPromises.add(wrappedPromise);
+}
+```
+
+4. Update `process()` loop to await misc promises alongside ObservableQueries
+
+5. Add cleanup in finally block
+
+**Key Behaviors:**
+
+- **Loop prevention**: Once a key exists in either map, subsequent calls are no-ops
+- **Auto-capture**: Promise wrapped to store resolved value in `miscResults`
+- **Persistence**: `miscResults` survives render passes for retrieval
+- **Parallel awaiting**: Both ObservableQueries and misc promises awaited together
+
+**Usage:**
+
+```typescript
+// In a component that needs arbitrary async data during SSR
+const ssrContext = useContext(getApolloContext())[contextSymbol];
+
+if (ssrContext && !ssrContext.hasMiscPromise("app-config")) {
+  ssrContext.addMiscPromise("app-config", fetchConfig());
+}
+
+const config = ssrContext?.getMiscResult<Config>("app-config");
+```
+
+---
