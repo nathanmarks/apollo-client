@@ -70,3 +70,61 @@ The `tap({ subscribe: ... })` callback fires before `BehaviorSubject.observed` b
 Tested with rxjs BehaviorSubject - confirmed that `subject.observed` is `true` by the time the microtask executes.
 
 ---
+
+## Patch 1d: `queueMicrotask` for scheduleNotify
+
+**File:** `src/core/ObservableQuery.ts`
+
+**Changes:**
+
+1. Changed `notifyTimeout` from `ReturnType<typeof setTimeout>` to `notifyPending: boolean`
+2. Updated `resetNotifications()` to clear the flag instead of `clearTimeout()`
+3. Updated `scheduleNotify()` to use `queueMicrotask` with a guard
+
+```diff
+- private notifyTimeout?: ReturnType<typeof setTimeout>;
++ private notifyPending: boolean = false;
+
+  private resetNotifications() {
+-   if (this.notifyTimeout) {
+-     clearTimeout(this.notifyTimeout);
+-     this.notifyTimeout = void 0;
+-   }
++   this.notifyPending = false;
+    this.dirty = false;
+  }
+
+  private scheduleNotify() {
+    if (this.dirty) return;
+    this.dirty = true;
+-   if (!this.notifyTimeout) {
+-     this.notifyTimeout = setTimeout(() => this.notify(true), 0);
++   if (!this.notifyPending) {
++     this.notifyPending = true;
++     queueMicrotask(() => {
++       if (this.notifyPending) {
++         this.notify(true);
++       }
++     });
+    }
+  }
+```
+
+**Why:**
+
+`scheduleNotify()` batches cache update notifications. The original used `setTimeout` with `clearTimeout` for cancellation.
+
+Since microtasks can't be cancelled, we use a flag-based guard pattern:
+- `notifyPending = true` when scheduled
+- `resetNotifications()` sets `notifyPending = false`
+- The microtask checks `notifyPending` before executing
+
+**Validation:**
+
+Tested all scenarios:
+- Normal case: Works correctly
+- Batching multiple calls: Coalesces to single notification
+- Cancellation via `resetNotifications()`: Flag prevents execution
+- Cancel + reschedule: Correctly schedules new notification
+
+---

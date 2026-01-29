@@ -1721,14 +1721,13 @@ Did you mean to call refetch(variables) instead of refetch({ variables })?`,
 
   private dirty: boolean = false;
 
-  private notifyTimeout?: ReturnType<typeof setTimeout>;
+  // IC: Changed from setTimeout handle to boolean flag for queueMicrotask pattern
+  private notifyPending: boolean = false;
 
   /** @internal */
   private resetNotifications() {
-    if (this.notifyTimeout) {
-      clearTimeout(this.notifyTimeout);
-      this.notifyTimeout = void 0;
-    }
+    // IC: Can't cancel microtasks, but the notifyPending flag guards execution
+    this.notifyPending = false;
     this.dirty = false;
   }
 
@@ -1736,8 +1735,14 @@ Did you mean to call refetch(variables) instead of refetch({ variables })?`,
   private scheduleNotify() {
     if (this.dirty) return;
     this.dirty = true;
-    if (!this.notifyTimeout) {
-      this.notifyTimeout = setTimeout(() => this.notify(true), 0);
+    if (!this.notifyPending) {
+      this.notifyPending = true;
+      // IC: Use queueMicrotask instead of setTimeout for better performance
+      queueMicrotask(() => {
+        if (this.notifyPending) {
+          this.notify(true);
+        }
+      });
     }
   }
 
