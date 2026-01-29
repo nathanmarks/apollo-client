@@ -950,20 +950,23 @@ export class QueryManager {
         }
 
         if (deduplication) {
-          const printedServerQuery = print(serverQuery);
+          // IC: Use operation name for deduplication key instead of expensive print().
+          // Our operation names are unique, so this is sufficient.
+          // Fall back to print() only if operation name is somehow undefined.
+          const dedupeKey = operationName || print(serverQuery);
           const varJson = canonicalStringify(variables);
 
-          entry = inFlightLinkObservables.lookup(printedServerQuery, varJson);
+          entry = inFlightLinkObservables.lookup(dedupeKey, varJson);
 
           if (!entry.observable) {
             entry.observable = execute(link, operation, executeContext).pipe(
               withRestart,
               finalize(() => {
                 if (
-                  inFlightLinkObservables.peek(printedServerQuery, varJson) ===
+                  inFlightLinkObservables.peek(dedupeKey, varJson) ===
                   entry
                 ) {
-                  inFlightLinkObservables.remove(printedServerQuery, varJson);
+                  inFlightLinkObservables.remove(dedupeKey, varJson);
                 }
               }),
               // We don't want to replay the last emitted value for

@@ -128,3 +128,32 @@ Tested all scenarios:
 - Cancel + reschedule: Correctly schedules new notification
 
 ---
+
+## Patch 2: Use operation name for deduplication
+
+**File:** `src/core/QueryManager.ts`
+
+**Change:**
+
+```diff
+  if (deduplication) {
+-   const printedServerQuery = print(serverQuery);
++   // IC: Use operation name for deduplication key instead of expensive print().
++   // Our operation names are unique, so this is sufficient.
++   const dedupeKey = operationName || print(serverQuery);
+    const varJson = canonicalStringify(variables);
+
+-   entry = inFlightLinkObservables.lookup(printedServerQuery, varJson);
++   entry = inFlightLinkObservables.lookup(dedupeKey, varJson);
+    // ... also updated in finalize() callback
+```
+
+**Why:**
+
+The `print()` function from `graphql-js` traverses the entire AST and builds a string representation. For large queries, this is expensive—especially on older hardware. While Apollo has a `printCache`, the first call for each unique `DocumentNode` still pays the full traversal cost.
+
+This was on the **critical path**: `print()` was called in `getObservableFromLink()` *before* the network request could begin, blocking initial data fetching.
+
+**Our operation names are unique**, so the operation name is sufficient as a deduplication key. The `print()` call is now only a fallback for the edge case of queries without operation names.
+
+---
