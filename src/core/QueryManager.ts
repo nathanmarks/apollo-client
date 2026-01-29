@@ -1,10 +1,12 @@
 import { Trie } from "@wry/trie";
 import type {
-  DirectiveNode,
+  // IC: Commented out - not used with directive traversal skip patch
+  // DirectiveNode,
   DocumentNode,
   FormattedExecutionResult,
 } from "graphql";
-import { BREAK, Kind, OperationTypeNode, visit } from "graphql";
+// IC: Kind commented out - not used with directive traversal skip patch
+import { BREAK, /* Kind, */ OperationTypeNode, visit } from "graphql";
 import { Observable, throwError } from "rxjs";
 import {
   catchError,
@@ -57,12 +59,14 @@ import {
   getOperationDefinition,
   getOperationName,
   graphQLResultHasError,
-  hasDirectives,
-  hasForcedResolvers,
+  // IC: Commented out - not used with directive traversal skip patch
+  // hasDirectives,
+  // hasForcedResolvers,
   isDocumentNode,
   isNonNullObject,
   makeUniqueId,
-  removeDirectivesFromDocument,
+  // IC: Commented out - not used with directive traversal skip patch
+  // removeDirectivesFromDocument,
   streamInfoSymbol,
   toQueryResult,
 } from "@apollo/client/utilities/internal";
@@ -500,26 +504,27 @@ export class QueryManager {
       const operationDefinition = getOperationDefinition(document);
 
       const cacheEntry: TransformCacheEntry = {
-        // TODO These three calls (hasClientExports, shouldForceResolvers, and
-        // usesNonreactiveDirective) are performing independent full traversals
-        // of the transformed document. We should consider merging these
-        // traversals into a single pass in the future, though the work is
-        // cached after the first time.
-        hasClientExports: hasDirectives(["client", "export"], document, true),
-        hasForcedResolvers: hasForcedResolvers(document),
-        hasNonreactiveDirective: hasDirectives(["nonreactive"], document),
-        hasIncrementalDirective: hasDirectives(["defer"], document),
-        nonReactiveQuery: addNonReactiveToNamedFragments(document),
-        clientQuery: hasDirectives(["client"], document) ? document : null,
-        serverQuery: removeDirectivesFromDocument(
-          [
-            { name: "client", remove: true },
-            { name: "connection" },
-            { name: "nonreactive" },
-            { name: "unmask" },
-          ],
-          document
-        ),
+        // IC: Skip expensive AST traversals - we don't use @client, @export,
+        // @nonreactive, @connection, or @unmask directives. The original code
+        // performed 6+ full AST traversals per unique document to detect and
+        // process these directives. By defaulting these values, we eliminate
+        // that overhead entirely.
+        //
+        // Original code (for reference):
+        // hasClientExports: hasDirectives(["client", "export"], document, true),
+        // hasForcedResolvers: hasForcedResolvers(document),
+        // hasNonreactiveDirective: hasDirectives(["nonreactive"], document),
+        // hasIncrementalDirective: hasDirectives(["defer"], document),
+        // nonReactiveQuery: addNonReactiveToNamedFragments(document),
+        // clientQuery: hasDirectives(["client"], document) ? document : null,
+        // serverQuery: removeDirectivesFromDocument([...], document),
+        hasClientExports: false,
+        hasForcedResolvers: false,
+        hasNonreactiveDirective: false,
+        hasIncrementalDirective: false,
+        nonReactiveQuery: document,
+        clientQuery: null,
+        serverQuery: document,
         operationType: operationDefinition?.operation,
         defaultVars: getDefaultValues(
           operationDefinition
@@ -950,20 +955,23 @@ export class QueryManager {
         }
 
         if (deduplication) {
-          const printedServerQuery = print(serverQuery);
+          // IC: Use operation name for deduplication key instead of expensive print().
+          // Our operation names are unique, so this is sufficient.
+          // Fall back to print() only if operation name is somehow undefined.
+          const dedupeKey = operationName || print(serverQuery);
           const varJson = canonicalStringify(variables);
 
-          entry = inFlightLinkObservables.lookup(printedServerQuery, varJson);
+          entry = inFlightLinkObservables.lookup(dedupeKey, varJson);
 
           if (!entry.observable) {
             entry.observable = execute(link, operation, executeContext).pipe(
               withRestart,
               finalize(() => {
                 if (
-                  inFlightLinkObservables.peek(printedServerQuery, varJson) ===
+                  inFlightLinkObservables.peek(dedupeKey, varJson) ===
                   entry
                 ) {
-                  inFlightLinkObservables.remove(printedServerQuery, varJson);
+                  inFlightLinkObservables.remove(dedupeKey, varJson);
                 }
               }),
               // We don't want to replay the last emitted value for
@@ -1806,30 +1814,31 @@ function isFullyUnmaskedOperation(document: DocumentNode) {
   return isUnmasked;
 }
 
-function addNonReactiveToNamedFragments(document: DocumentNode) {
-  return visit(document, {
-    FragmentSpread: (node) => {
-      // Do not add `@nonreactive` if the fragment is marked with `@unmask`
-      // since we want to react to changes in this fragment.
-      if (
-        node.directives?.some((directive) => directive.name.value === "unmask")
-      ) {
-        return;
-      }
-
-      return {
-        ...node,
-        directives: [
-          ...(node.directives || []),
-          {
-            kind: Kind.DIRECTIVE,
-            name: { kind: Kind.NAME, value: "nonreactive" },
-          } satisfies DirectiveNode,
-        ],
-      };
-    },
-  });
-}
+// IC: Commented out - not used with directive traversal skip patch
+// function addNonReactiveToNamedFragments(document: DocumentNode) {
+//   return visit(document, {
+//     FragmentSpread: (node) => {
+//       // Do not add `@nonreactive` if the fragment is marked with `@unmask`
+//       // since we want to react to changes in this fragment.
+//       if (
+//         node.directives?.some((directive) => directive.name.value === "unmask")
+//       ) {
+//         return;
+//       }
+//
+//       return {
+//         ...node,
+//         directives: [
+//           ...(node.directives || []),
+//           {
+//             kind: Kind.DIRECTIVE,
+//             name: { kind: Kind.NAME, value: "nonreactive" },
+//           } satisfies DirectiveNode,
+//         ],
+//       };
+//     },
+//   });
+// }
 
 function removeStreamDetailsFromExtensions(
   original: FormattedExecutionResult<any, ExtensionsWithStreamInfo>

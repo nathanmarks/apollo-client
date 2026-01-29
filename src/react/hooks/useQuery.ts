@@ -583,8 +583,9 @@ function useResult<TData, TVariables extends OperationVariables>(
         // This way, an existing subscription can be reused without an additional
         // request if "unsubscribe"  and "resubscribe" to the same ObservableQuery
         // happen in very fast succession.
+        // IC: Use queueMicrotask instead of setTimeout for better performance.
         return () => {
-          setTimeout(() => subscription.unsubscribe());
+          queueMicrotask(() => subscription.unsubscribe());
         };
       },
 
