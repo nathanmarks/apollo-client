@@ -350,3 +350,26 @@ Restored `useHandleSkip` + re-added `originalResult` Symbol pattern. This is the
 2. **Why `originalResult` Symbol works**: It doesn't cache—it just checks "is this already from the skip source?" and only recreates when necessary. Changes to `previousData`/`variables` naturally flow through when `useHandleSkip` decides to regenerate.
 
 3. **Why `useMemo` failed**: It cached the *output* but couldn't detect when the underlying state (`resultData.current`) was mutated by `setResult()`, leading to stale snapshots.
+
+---
+
+### Skip directive checks in HTTP links
+
+**Changes:**
+
+**`createHttpLink.ts`** - Removed `@client` and `@defer` directive checks:
+
+- Removed `hasDirectives(["client"], ...)` check that stripped `@client` fields before sending to server
+- Removed `hasDirectives(["defer"], ...)` check that set multipart headers for `@defer` responses
+- Simplified subscription header logic (subscriptions still work, just `@defer` on subscriptions removed)
+- Commented out unused imports: `hasDirectives`, `removeClientSetsFromDocument`
+
+**`batchHttpLink.ts`** - Removed `@client` directive check:
+
+- Removed `hasDirectives(["client"], ...)` check that stripped `@client` fields
+- Simplified operation mapping to pass queries directly
+- Commented out unused imports: `hasDirectives`, `removeClientSetsFromDocument`
+
+**Why:**
+
+We don't use `@client` or `@defer` directives. The original code performed full AST traversals on every HTTP request to detect these directives. By removing these checks, we eliminate that overhead entirely on the critical path before network requests.

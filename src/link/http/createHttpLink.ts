@@ -1,9 +1,11 @@
-import { invariant } from "../../utilities/globals/index.js";
+// IC: Commented out invariant - only used for @defer warning which we removed
+// import { invariant } from "../../utilities/globals/index.js";
 
 import type { DefinitionNode } from "graphql";
 
 import { ApolloLink } from "../core/index.js";
-import { Observable, hasDirectives } from "../../utilities/index.js";
+// IC: Commented out hasDirectives - we don't use @client or @defer directives
+import { Observable /*, hasDirectives */ } from "../../utilities/index.js";
 import { serializeFetchParameter } from "./serializeFetchParameter.js";
 import { selectURI } from "./selectURI.js";
 import {
@@ -20,10 +22,11 @@ import {
 } from "./selectHttpOptionsAndBody.js";
 import { rewriteURIForGET } from "./rewriteURIForGET.js";
 import { fromError, filterOperationVariables } from "../utils/index.js";
+// IC: Commented out removeClientSetsFromDocument - we don't use @client directive
 import {
   maybe,
   getMainDefinition,
-  removeClientSetsFromDocument,
+  // removeClientSetsFromDocument,
 } from "../../utilities/index.js";
 
 const backupFetch = maybe(() => fetch);
@@ -89,19 +92,20 @@ export const createHttpLink = (linkOptions: HttpOptions = {}) => {
       headers: contextHeaders,
     };
 
-    if (hasDirectives(["client"], operation.query)) {
-      const transformedQuery = removeClientSetsFromDocument(operation.query);
-
-      if (!transformedQuery) {
-        return fromError(
-          new Error(
-            "HttpLink: Trying to send a client-only query to the server. To send to the server, ensure a non-client field is added to the query or set the `transformOptions.removeClientFields` option to `true`."
-          )
-        );
-      }
-
-      operation.query = transformedQuery;
-    }
+    // IC: Commented out @client directive check - we don't use @client directive
+    // if (hasDirectives(["client"], operation.query)) {
+    //   const transformedQuery = removeClientSetsFromDocument(operation.query);
+    //
+    //   if (!transformedQuery) {
+    //     return fromError(
+    //       new Error(
+    //         "HttpLink: Trying to send a client-only query to the server. To send to the server, ensure a non-client field is added to the query or set the `transformOptions.removeClientFields` option to `true`."
+    //       )
+    //     );
+    //   }
+    //
+    //   operation.query = transformedQuery;
+    // }
 
     //uses fallback, link, and then context to build options
     const { options, body } = selectHttpOptionsAndBodyInternal(
@@ -135,8 +139,8 @@ export const createHttpLink = (linkOptions: HttpOptions = {}) => {
     const isSubscription = definitionIsSubscription(
       getMainDefinition(operation.query)
     );
-    // does not match custom directives beginning with @defer
-    const hasDefer = hasDirectives(["defer"], operation.query);
+    // IC: Commented out @defer directive check - we don't use @defer directive
+    // const hasDefer = hasDirectives(["defer"], operation.query);
     if (
       useGETForQueries &&
       !operation.query.definitions.some(definitionIsMutation)
@@ -144,22 +148,28 @@ export const createHttpLink = (linkOptions: HttpOptions = {}) => {
       options.method = "GET";
     }
 
-    if (hasDefer || isSubscription) {
+    // IC: Simplified to only handle subscriptions - we don't use @defer directive
+    // if (hasDefer || isSubscription) {
+    //   options.headers = options.headers || {};
+    //   let acceptHeader = "multipart/mixed;";
+    //   // Omit defer-specific headers if the user attempts to defer a selection
+    //   // set on a subscription and log a warning.
+    //   if (isSubscription && hasDefer) {
+    //     invariant.warn("Multipart-subscriptions do not support @defer");
+    //   }
+    //
+    //   if (isSubscription) {
+    //     acceptHeader +=
+    //       "boundary=graphql;subscriptionSpec=1.0,application/json";
+    //   } else if (hasDefer) {
+    //     acceptHeader += "deferSpec=20220824,application/json";
+    //   }
+    //   options.headers.accept = acceptHeader;
+    // }
+    if (isSubscription) {
       options.headers = options.headers || {};
-      let acceptHeader = "multipart/mixed;";
-      // Omit defer-specific headers if the user attempts to defer a selection
-      // set on a subscription and log a warning.
-      if (isSubscription && hasDefer) {
-        invariant.warn("Multipart-subscriptions do not support @defer");
-      }
-
-      if (isSubscription) {
-        acceptHeader +=
-          "boundary=graphql;subscriptionSpec=1.0,application/json";
-      } else if (hasDefer) {
-        acceptHeader += "deferSpec=20220824,application/json";
-      }
-      options.headers.accept = acceptHeader;
+      options.headers.accept =
+        "multipart/mixed;boundary=graphql;subscriptionSpec=1.0,application/json";
     }
 
     if (options.method === "GET") {

@@ -1,10 +1,11 @@
 import type { Operation, FetchResult } from "../core/index.js";
 import { ApolloLink } from "../core/index.js";
+// IC: Commented out hasDirectives and removeClientSetsFromDocument - we don't use @client directive
 import {
   Observable,
-  hasDirectives,
+  // hasDirectives,
   maybe,
-  removeClientSetsFromDocument,
+  // removeClientSetsFromDocument,
 } from "../../utilities/index.js";
 import { fromError } from "../utils/index.js";
 import type { HttpOptions } from "../http/index.js";
@@ -101,28 +102,30 @@ export class BatchHttpLink extends ApolloLink {
         headers: { ...clientAwarenessHeaders, ...context.headers },
       };
 
-      const queries = operations.map(({ query }) => {
-        if (hasDirectives(["client"], query)) {
-          return removeClientSetsFromDocument(query);
-        }
-
-        return query;
-      });
-
-      // If we have a query that returned `null` after removing client-only
-      // fields, it indicates a query that is using all client-only fields.
-      if (queries.some((query) => !query)) {
-        return fromError<FetchResult[]>(
-          new Error(
-            "BatchHttpLink: Trying to send a client-only query to the server. To send to the server, ensure a non-client field is added to the query or enable the `transformOptions.removeClientFields` option."
-          )
-        );
-      }
+      // IC: Commented out @client directive check - we don't use @client directive
+      // const queries = operations.map(({ query }) => {
+      //   if (hasDirectives(["client"], query)) {
+      //     return removeClientSetsFromDocument(query);
+      //   }
+      //
+      //   return query;
+      // });
+      //
+      // // If we have a query that returned `null` after removing client-only
+      // // fields, it indicates a query that is using all client-only fields.
+      // if (queries.some((query) => !query)) {
+      //   return fromError<FetchResult[]>(
+      //     new Error(
+      //       "BatchHttpLink: Trying to send a client-only query to the server. To send to the server, ensure a non-client field is added to the query or enable the `transformOptions.removeClientFields` option."
+      //     )
+      //   );
+      // }
 
       //uses fallback, link, and then context to build options
-      const optsAndBody = operations.map((operation, index) => {
+      const optsAndBody = operations.map((operation) => {
+        // IC: Changed from { ...operation, query: queries[index]! } to just operation
         const result = selectHttpOptionsAndBodyInternal(
-          { ...operation, query: queries[index]! },
+          operation,
           print,
           fallbackHttpConfig,
           linkConfig,
