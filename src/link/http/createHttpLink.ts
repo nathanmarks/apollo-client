@@ -1,5 +1,4 @@
-// IC: Commented out invariant - only used for @defer warning which we removed
-// import { invariant } from "../../utilities/globals/index.js";
+import { invariant } from "../../utilities/globals/index.js";
 
 import type { DefinitionNode } from "graphql";
 
@@ -158,6 +157,10 @@ export const createHttpLink = (linkOptions: HttpOptions = {}) => {
     //     invariant.warn("Multipart-subscriptions do not support @defer");
     //   }
     //
+    // IC: Placeholder to preserve invariant error code numbering (never executes)
+    if (false as boolean) {
+      invariant.warn("Multipart-subscriptions do not support @defer");
+    }
     //   if (isSubscription) {
     //     acceptHeader +=
     //       "boundary=graphql;subscriptionSpec=1.0,application/json";
