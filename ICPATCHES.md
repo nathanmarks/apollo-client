@@ -372,4 +372,4 @@ Restored `useHandleSkip` + re-added `originalResult` Symbol pattern. This is the
 
 **Why:**
 
-We don't use `@client` or `@defer` directives. The original code performed full AST traversals on every HTTP request to detect these directives. By removing these checks, we eliminate that overhead entirely on the critical path before network requests.
+Related to Commit 3 (skip directive traversals in `getDocumentInfo`). We don't use `@client` or `@defer` directives. The original code performed full AST traversals on every HTTP request to detect these directives. By removing these checks, we eliminate that overhead entirely on the critical path before network requests.
