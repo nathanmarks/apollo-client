@@ -915,9 +915,17 @@ export class QueryManager<TStore> {
           queryNames.set(desc, desc);
           queryNamesAndQueryStrings.set(desc, false);
         } else if (isDocumentNode(desc)) {
-          const queryString = print(this.transform(desc));
-          queryNames.set(queryString, getOperationName(desc));
-          queryNamesAndQueryStrings.set(queryString, false);
+          // IC: Use operation name instead of expensive print().
+          // Our operation names are unique, so this is sufficient.
+          // Original:
+          // const queryString = print(this.transform(desc));
+          // queryNames.set(queryString, getOperationName(desc));
+          // queryNamesAndQueryStrings.set(queryString, false);
+          const operationName = getOperationName(desc);
+          if (operationName) {
+            queryNames.set(operationName, operationName);
+            queryNamesAndQueryStrings.set(operationName, false);
+          }
         } else if (isNonNullObject(desc) && desc.query) {
           legacyQueryOptions.add(desc);
         }
@@ -945,12 +953,14 @@ export class QueryManager<TStore> {
 
         if (
           include === "active" ||
-          (queryName && queryNamesAndQueryStrings.has(queryName)) ||
-          (document && queryNamesAndQueryStrings.has(print(document)))
+          (queryName && queryNamesAndQueryStrings.has(queryName))
+          // IC: Removed print(document) check - operation names are unique
+          // Original: || (document && queryNamesAndQueryStrings.has(print(document)))
         ) {
           queries.set(queryId, oq);
           if (queryName) queryNamesAndQueryStrings.set(queryName, true);
-          if (document) queryNamesAndQueryStrings.set(print(document), true);
+          // IC: Removed - no longer needed since we rely on queryName only
+          // Original: if (document) queryNamesAndQueryStrings.set(print(document), true);
         }
       }
     });

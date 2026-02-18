@@ -282,6 +282,50 @@ Other `print()` usages (e.g., HTTP link serializing the request body) happen *af
 
 ---
 
+### Use operation name for refetch query matching instead of `print()`
+
+**Changes:**
+
+**`QueryManager.ts`** - In `getObservableQueries()`, replaced `print()` calls with `getOperationName()` for matching refetch queries:
+
+```diff
+  } else if (isDocumentNode(desc)) {
+-   const queryString = print(this.transform(desc));
+-   queryNames.set(queryString, getOperationName(desc));
+-   queryNamesAndQueryStrings.set(queryString, false);
++   // IC: Use operation name instead of expensive print().
++   // Our operation names are unique, so this is sufficient.
++   const operationName = getOperationName(desc);
++   if (operationName) {
++     queryNames.set(operationName, operationName);
++     queryNamesAndQueryStrings.set(operationName, false);
++   }
+  }
+```
+
+```diff
+  if (
+    include === "active" ||
+-   (queryName && queryNamesAndQueryStrings.has(queryName)) ||
+-   (document && queryNamesAndQueryStrings.has(print(document)))
++   (queryName && queryNamesAndQueryStrings.has(queryName))
++   // IC: Removed print(document) check - operation names are unique
+  ) {
+    queries.set(queryId, oq);
+    if (queryName) queryNamesAndQueryStrings.set(queryName, true);
+-   if (document) queryNamesAndQueryStrings.set(print(document), true);
++   // IC: Removed - no longer needed since we rely on queryName only
+  }
+```
+
+**Why:**
+
+This is a companion change to the deduplication `print()` removal above. When `markMutationResult()` is called with `refetchQueries` containing DocumentNode entries, `getObservableQueries()` was using `print()` to match queries by their string representation.
+
+Since our operation names are unique, we can use the operation name directly for matching instead of the expensive `print()` call. This removes `print()` from another code path that could be triggered during mutation result handling.
+
+---
+
 ## Historical Context: Evolution of Referential Stability in `useQuery`
 
 Understanding how Apollo Client handled referential stability across versions explains why our fix works.
