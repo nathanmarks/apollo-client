@@ -135,7 +135,7 @@ export class RenderPromises {
   }
 
   public hasPromises() {
-    return this.queryPromises.size > 0;
+    return this.queryPromises.size > 0 || this.miscPromises.size > 0;
   }
 
   public consumeAndAwaitPromises() {

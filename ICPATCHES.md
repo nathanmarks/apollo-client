@@ -326,6 +326,25 @@ Since our operation names are unique, we can use the operation name directly for
 
 ---
 
+### Fix `hasPromises()` to check `miscPromises`
+
+**Changes:**
+
+**`RenderPromises.ts`** - Updated `hasPromises()` to also check `miscPromises`:
+
+```diff
+  public hasPromises() {
+-   return this.queryPromises.size > 0;
++   return this.queryPromises.size > 0 || this.miscPromises.size > 0;
+  }
+```
+
+**Why:**
+
+Without this fix, the SSR render loop in `getDataFromTree` exits early when only `miscPromises` (e.g. placement loaders) are pending. The loop condition calls `hasPromises()` to decide whether another render pass is needed — but since it only checked `queryPromises`, it would return `false` when misc promises were the only pending work. This meant the final render pass with resolved data never happened, leaving components with unresolved data during SSR.
+
+---
+
 ## Historical Context: Evolution of Referential Stability in `useQuery`
 
 Understanding how Apollo Client handled referential stability across versions explains why our fix works.
