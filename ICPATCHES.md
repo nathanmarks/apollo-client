@@ -345,6 +345,26 @@ Without this fix, the SSR render loop in `getDataFromTree` exits early when only
 
 ---
 
+### Treat failed HTTP responses as network errors only
+
+**Changes:**
+
+- **`parseAndCheckHttpResponse.ts`** - Simplified `handleError()` to call only `observer.error(err)`, without first emitting `err.result` through `observer.next()`.
+- **`batchHttpLink.ts`** - Removed the equivalent partial-result emission from the batch transport's error handler.
+- Preserved the `ServerError`'s `statusCode`, `response`, and parsed body in `result`.
+
+**Why:**
+
+Our API does not intentionally return usable partial data with non-2xx HTTP statuses. Previously, a failed response containing both `data` and `errors` was emitted as a GraphQL result before the network error. With `errorPolicy: 'all'`, this could write the rejected response's data into the cache and synthesize a GraphQL-only `ApolloError`, obscuring the HTTP status used by error handling.
+
+Both HTTP transports now deliver these failures only through the error channel. HTTP 200 responses with partial data and GraphQL errors retain their existing error-policy behavior. The rejected body remains available on `networkError.result`; error-link callbacks can still inspect the GraphQL errors in that body.
+
+**Verification:**
+
+Transport regressions cover HTTP 429 with a null data field, HTTP 500 with populated data, and HTTP 200 partial results. Node smoke runs against the built ESM and CJS distributions verify query/watchQuery network errors, preserved metadata, unchanged cache contents after failures, and normal partial-result caching for HTTP 200. No React or SSR rendering is required.
+
+---
+
 ## Historical Context: Evolution of Referential Stability in `useQuery`
 
 Understanding how Apollo Client handled referential stability across versions explains why our fix works.

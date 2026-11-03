@@ -151,6 +151,60 @@ describe("BatchHttpLink", () => {
     execute(link, { query: sampleQuery }).subscribe(next, error, complete);
   });
 
+  describe("HTTP error handling", () => {
+    it.each([
+      { status: 429, data: { stub: null } },
+      { status: 500, data: { stub: { id: 1 } } },
+    ])("rejects every operation for HTTP $status", async ({ status, data }) => {
+      const body = { data, errors: [{ message: "Request failed" }] };
+      const response = {
+        status,
+        text: async () => JSON.stringify(body),
+      };
+      const link = new BatchHttpLink({
+        uri: "/batch",
+        batchMax: 2,
+        fetch: jest.fn().mockResolvedValue(response),
+      });
+      const streams = [sampleQuery, sampleMutation].map(
+        (query) => new ObservableStream(execute(link, { query }))
+      );
+
+      for (const stream of streams) {
+        const error = await stream.takeError();
+
+        expect(error.name).toBe("ServerError");
+        expect(error.statusCode).toBe(status);
+        expect(error.response).toBe(response);
+        expect(error.result).toEqual(body);
+      }
+    });
+
+    it("emits partial GraphQL results for HTTP 200", async () => {
+      const results = [
+        { data: { stub: null }, errors: [{ message: "Missing stub" }] },
+        { data: { stub: { id: 1 } }, errors: [{ message: "Partial result" }] },
+      ];
+      const link = new BatchHttpLink({
+        uri: "/batch",
+        batchMax: 2,
+        fetch: jest.fn().mockResolvedValue({
+          status: 200,
+          text: async () => JSON.stringify(results),
+        }),
+      });
+      const streams = [sampleQuery, sampleMutation].map(
+        (query) => new ObservableStream(execute(link, { query }))
+      );
+
+      for (let index = 0; index < streams.length; index++) {
+        const stream = streams[index];
+        await expect(stream.takeNext()).resolves.toEqual(results[index]);
+        await expect(stream).toComplete();
+      }
+    });
+  });
+
   describe("batchKey", () => {
     const query = gql`
       query {

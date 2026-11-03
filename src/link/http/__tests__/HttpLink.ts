@@ -1131,14 +1131,6 @@ describe("HttpLink", () => {
       responseBody = responseBodyText;
       return Promise.resolve(responseBodyText);
     });
-    const textWithData = jest.fn(() => {
-      responseBody = {
-        data: { stub: { id: 1 } },
-        errors: [{ message: "dangit" }],
-      };
-
-      return Promise.resolve(JSON.stringify(responseBody));
-    });
 
     const textWithErrors = jest.fn(() => {
       responseBody = {
@@ -1213,25 +1205,49 @@ describe("HttpLink", () => {
       expect(error.result).toEqual(responseBody);
     });
 
-    it("throws an error if response code is > 300 and returns data", async () => {
-      fetch.mockReturnValueOnce(
-        Promise.resolve({ status: 400, text: textWithData })
+    it.each([
+      { status: 429, data: { stub: null } },
+      { status: 500, data: { stub: { id: 1 } } },
+    ])(
+      "does not emit response data for HTTP $status",
+      async ({ status, data }) => {
+        const body = { data, errors: [{ message: "Request failed" }] };
+        const response = {
+          status,
+          text: jest.fn().mockResolvedValue(JSON.stringify(body)),
+        };
+        const fetch = jest.fn().mockResolvedValue(response);
+
+        const link = createHttpLink({ uri: "data", fetch });
+        const stream = new ObservableStream(
+          execute(link, { query: sampleQuery })
+        );
+        const error: ServerError = await stream.takeError();
+
+        expect(error.name).toBe("ServerError");
+        expect(error.statusCode).toBe(status);
+        expect(error.response).toBe(response);
+        expect(error.result).toEqual(body);
+      }
+    );
+
+    it("emits partial GraphQL results for HTTP 200", async () => {
+      const body = {
+        data: { stub: { id: 1 } },
+        errors: [{ message: "Partial result" }],
+      };
+      const fetch = jest.fn().mockResolvedValue({
+        status: 200,
+        text: async () => JSON.stringify(body),
+      });
+
+      const link = createHttpLink({ uri: "data", fetch });
+      const stream = new ObservableStream(
+        execute(link, { query: sampleQuery })
       );
 
-      const link = createHttpLink({ uri: "data", fetch: fetch as any });
-
-      const observable = execute(link, { query: sampleQuery });
-      const stream = new ObservableStream(observable);
-
-      const result = await stream.takeNext();
-
-      expect(result).toEqual(responseBody);
-
-      const error = await stream.takeError();
-
-      expect(error.message).toMatch(/Received status code 400/);
-      expect(error.statusCode).toBe(400);
-      expect(error.result).toEqual(responseBody);
+      await expect(stream.takeNext()).resolves.toEqual(body);
+      await expect(stream).toComplete();
     });
 
     it("throws an error if only errors are returned", async () => {
